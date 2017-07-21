@@ -1,29 +1,60 @@
 #!python2
 
-# Based on the Pythonista Pixel Painter
+# Pythonista C64 Painter AKA Redux Paint
 #
+# Personal project for learning Python
+# Warning, in these waters there be monsterously messy code!
+# 
+# Based on the Pythonista Pixel Editor by Sebastian Jarsve
+# Modified by Rune Spaans
 #
 # Todo:
-# - Zoom 3x, Zoom 6x (draw portion of image?)
-# - Undo
+# - Zoom mode
 # - Brush size
 # - Autosave every 20 seconds and at exit
+# - Find nearest colour when loading image
+# - Undo
+# - Grid opacity
 # v Images saved in subfolder
 # v Move load/save icons to start of icon-row
-# - Find nearest colour when loading image
 # v Selecting colour twice sets BG colour
-# - Make colour set to BG transparent
-# - Clash test
+# - Make colour set to BG transparent?
+# - Clash test tool button
 # - Draw checkered/simple dither
 # - Preview with crt effect
 # v Full-screen with no Pythonista title bar
 # v Switch between gradient and 0-F order of colours
+# - Move more variables to the outermost scope
 # - General functions for converting 0-255 rgb to 0..1 rgb
 
-import console, scene, photos, clipboard, ui, io, os.path, Image, ImageFilter, time, sys, atexit
+import console, scene, photos, clipboard, ui, Image
+
+from io import BytesIO
+from os.path import isfile
+from time import clock
+
+
+# Convert colors from [0,255] to [0,1]
+def color_to_1(color):
+  if len(color) == 4:
+    return (color[0]/255.0, color[1]/255.0, color[2]/255.0, color[3]/255.0)
+  elif len(color) == 3:
+    return (color[0]/255.0, color[1]/255.0, color[2]/255.0, 1.0)
+  else:
+    print "Color data seems wrong"
+    return False
+				
+def xy_to_index(xcoord,ycoord):
+	arrayIndex = (ycoord * 160) + xcoord
+	return arrayIndex
+
+def index_to_xy(arrayIndex):
+	ycoord = int(arrayIndex/160)
+	xcoord = arrayIndex - (160 * ycoord)
+	return (xcoord,ycoord)
 
 def pil_to_ui(img):
-    with io.BytesIO() as bIO:
+    with BytesIO() as bIO:
         img.save(bIO, 'png')
         return ui.Image.from_data(bIO.getvalue())
     
@@ -57,15 +88,6 @@ def png_to_pixels(width, height, filename):
 	#im.save("temp_" + filename)
 	return im
 	
-def xy_to_index(xcoord,ycoord):
-	arrayIndex = ycoord*160 + xcoord + 1
-	return arrayIndex
-
-def index_to_xy(arrayIndex):
-	ycoord = int(arrayIndex/160)
-	xcoord = arrayIndex-(160*ycoord)-1
-	return (xcoord,ycoord)
-
 
 # The Pixel class, derived from a featureless 'object'
 class Pixel (object):
@@ -85,34 +107,82 @@ class Pixel (object):
 
 class PixelEditor(ui.View):
     # 1: 1x1 pixel, 2: 1x2 pixels, 3: 2x4 pixels, 4: character (4x8 pixels)
-    pixelSize = 1
-    paintMode = 'dots'
+    brushSize = 1
+    toolMode = 'dots'
     prevPixel = []
-    lastSave = 0 # Last autosave time
+    
+    # The various zoom levels
+    zoomLevels = (2, 3, 6)
+    zoomCurrent = 1 # What level we're currently zooming to
+    zoomState = False
+    
+    # Last autosave time
+    lastSave = 0 
     	
     def did_load(self):
-        self.row = 160
-        self.column = 200
-        self.lastSave = int(time.clock())
-        self.pixels = []
-        self.pixel_path = []
-        self.image_view = self.create_image_view()
-        self.grid_layout = self.create_grid_layout()
-        self.current_color = (1, 1, 1, 1)
-        self.mode = 'pencil'
-        self.auto_crop_image = False 
-        
+      self.row = 160
+      self.column = 200
+      self.lastSave = int(clock())
+      self.pixels = []
+      self.pixel_path = []
+      self.image_view = self.create_image_view()
+      self.grid_layout = self.create_grid_layout()
+      self.zoom_frame = self.create_zoom_view()
+      self.grid_opacity = 1.0
+      self.current_color = (1, 1, 1, 1)
+      #self.mode = 'pencil'
+      #self.auto_crop_image = False 
+      
     def has_image(self):
-        if self.pixel_path:
-            if [p for p in self.pixel_path if p.used()]:
-                return True 
-        return False 
-
+      if self.pixel_path:
+        if [p for p in self.pixel_path if p.used()]:
+          return True 
+      return False 
+      
+    def create_zoom_view(self):
+      zoomWidth = self.width / self.zoomLevels[self.zoomCurrent]
+      zoomHeight = self.height / self.zoomLevels[self.zoomCurrent]
+      # create an movable image showing the zoom area
+      with ui.ImageContext(320,200) as ctx:
+        ui.set_color('black')
+        line_inside = ui.Path.rect(2,2,316,196)
+        line_inside.line_width = 4
+        line_inside.stroke()
+        ui.set_color('white')
+        line_outside = ui.Path.rect(0,0,320,200)
+        line_outside.line_width = 4
+        line_outside.stroke()
+        zoomSquare = ctx.get_image()
+        #zoomSquare.show()
+      zoom_frame = ui.ImageView(hidden=True)
+      zoom_frame.bounds = (0,0,zoomWidth,zoomHeight)
+      zoom_frame.center = (self.width/2, self.height/2)
+      zoom_frame.image = zoomSquare
+      self.add_subview(zoom_frame)
+      return zoom_frame
+    
+    def get_zoom_center(self):
+      return (self.superview['editor'].zoom_frame.center)
+    
+    def set_zoom_center(self, position):
+      borderWidth = self.superview['editor'].width / self.zoomLevels[self.zoomCurrent] * 0.5
+      borderHeight = self.superview['editor'].height / self.zoomLevels[self.zoomCurrent] * 0.5
+      xPos = min(max(borderWidth, position[0]), self.superview['editor'].width-borderWidth)
+      yPos = min(max(borderHeight, position[1]), self.superview['editor'].height-borderHeight)
+      self.superview['editor'].zoom_frame.center = (xPos, yPos) 
+      return (xPos, yPos)
+      
+    def set_zoom_size(self):
+      zoomWidth = self.width / self.zoomLevels[self.zoomCurrent]
+      zoomHeight = self.height / self.zoomLevels[self.zoomCurrent]
+      self.superview['editor'].zoom_frame.width = zoomWidth
+      self.superview['editor'].zoom_frame.height = zoomHeight
+      
 		# Sets image in both views
     def set_image(self, image=None):
-    		# ?? why the 'or'?
+    		# Image is set to provided image or a new is created
         image = image or self.create_new_image()
-        # Sets both views
+        # Sets both main image and the smaller preview image
         self.image_view.image = self.superview['preview'].image = image
         
     def get_image(self):
@@ -135,10 +205,10 @@ class PixelEditor(ui.View):
             path.line_width = 1
             for y in xrange(self.column):
                 for x in xrange(self.row):
-                    # Fills image with pixels? 
+                    # Fills image with pixels
                     # Changing this changes the pixel aspect
                     pixel = Pixel(x*s*2, y*s, s*2, s)
-                    pixel.index = len(self.pixels) + 1
+                    pixel.index = len(self.pixels)
                     pixel.position = (x,y)
                     path.append_path(ui.Path.rect(*pixel.rect))
                     self.pixels.append(pixel) #Adds this pixel to the pixels list
@@ -171,7 +241,40 @@ class PixelEditor(ui.View):
             ui.set_color((0, 0, 0, 0))
             path.fill()
             return ctx.get_image()
-
+    
+    # Draws a zoomed in view defined by pixel top left and bottom right
+    def draw_zoomed_view(self, startPos, endPos):
+      # Pixel scale
+      s = (self.width/(endPos[0]-startPos[0]+1)*0.5)
+      #print ("Scale:" + str(s) )
+      #print ("Zooming in to: [" + str(startPos) + " " + str(endPos) + "]")
+      
+      # Move all pixels off-screen
+      for index in range(0,len(self.pixels)):
+        self.pixels[index].rect.x = self.pixels[index].rect.y = -100
+      # Position zoomed pixels over canvas
+      num = 0
+      for y in range(startPos[1],endPos[1]+1):
+        for x in range(startPos[0],endPos[0]+1):
+          curPixel = self.pixels[xy_to_index(x,y)]
+          # Rect(x, y, w, h) 
+          # rect.x, rect.y is components lower-left corner
+          curPixel.rect.x = (x-startPos[0]) * s * 2
+          curPixel.rect.y = (y-startPos[1]) * s
+          curPixel.rect.width = (s * 2 ) -1
+          curPixel.rect.height = s - 1
+          # Debug
+          if num < 20:
+          #  print ("startpos:" + str(startPos[0]) + ", real index:" + str(curPixel.index) + ", calc index:" + str(xy_to_index(x,y)) + ", pos:" + str(curPixel.position))
+            print ("pos:" + str(curPixel.position) + ", rect.x:" + str(curPixel.rect.x) + ", rect.width:" +str(curPixel.rect.width))
+          num = num + 1
+      # Redraw view
+      
+      
+      # Redraw grid
+      
+      return True    
+    
     # Redraws the entire image based on what is stored in 
     # pixel_editor.pixel_path. Done after undo.
     def create_image_from_history(self):
@@ -220,7 +323,6 @@ class PixelEditor(ui.View):
       doLine = False
       xDist = 0
       yDist = 0
-      # Debug, try and figure out which pixel we are over
       if self.prevPixel != []:
         # Only draw lines inside or at the end of touch
         if touchState == "moved" or touchState == "ended":
@@ -246,14 +348,14 @@ class PixelEditor(ui.View):
         yDir = 1 if yStart < pixel.position[1] else -1
         yIncr = 0 if yDist == 0 else (float(xDist)/yDist)
         xIncr = 0 if xDist == 0 else (float(yDist)/xDist)
-        #self.superview['debugtext'].text = "lineDraw"
         # Update all pixel objects along the drawn line
         for c in range(1, max(xDist,yDist)):
-          #self.current_color = 'orange'
           if yDist >= xDist:
-            curPixel = self.pixels[ xy_to_index( int(xStart+(yIncr*c*xDir)-0.5), int(yStart+(c*yDir)) ) ]
+            #self.current_color = 'yellow'
+            curPixel = self.pixels[ xy_to_index( int(xStart+(yIncr*c*xDir)+0.5), int(yStart+(c*yDir)) ) ]
           else:
-            curPixel = self.pixels[ xy_to_index( xStart+(xDir*c)-1, int(yStart+(xIncr*c*yDir)) ) ]
+            #self.current_color = 'purple'
+            curPixel = self.pixels[ xy_to_index( xStart+(xDir*c), int(yStart+(xIncr*c*yDir)) ) ]
           if curPixel.colors[-1] != self.current_color:
             curPixel.colors.append(self.current_color)
             linePixels.append(curPixel)
@@ -295,16 +397,37 @@ class PixelEditor(ui.View):
         for pixel in self.pixels:
           if p in pixel.rect:
             # Auto-save image every 20 seconds of painting
-            saveDelta = int(time.clock()) - self.lastSave
+            saveDelta = int(clock()) - self.lastSave
             if saveDelta > 20: 
               print 'Autosave' # !! Add autosave here !!
-              self.lastSave = int(time.clock())
-            if self.paintMode == 'dots':
+              self.lastSave = int(clock())
+            if self.toolMode == 'dots':
               self.drawpixel(pixel)
-            elif self.paintMode == 'lines':
+            elif self.toolMode == 'lines':
               self.drawline(self.prevPixel, pixel, touchState)
-            self.prevPixel = pixel
-            self.superview['debugtext'].text = "index:" + str(pixel.index) + ", pos:" + str(pixel.position) + ", touch:" + touchState + ", saveDelta:" + str(saveDelta)
+              self.prevPixel = pixel
+            elif self.toolMode == 'zoom':
+              self.set_zoom_center(touch.location)
+              
+              # Calculate the bounds of the zoom area
+              zoomCenter = self.zoom_frame.center
+              halfWidth = 319 * 0.5 / self.zoomLevels[self.zoomCurrent]
+              halfHeight = 199 * 0.5 / self.zoomLevels[self.zoomCurrent]
+              zoomFrom = (int((zoomCenter[0]/3-halfWidth)*0.5), int(zoomCenter[1]/3-halfHeight))
+              zoomTo = (int((zoomCenter[0]/3+halfWidth)*0.5), int(zoomCenter[1]/3+halfHeight))
+                
+              # Debug text for zoom mode
+              self.superview['debugtext'].text = "Zoom location: [" + str(zoomFrom) + "," + str(zoomTo) + "], zoom level:" + str(self.zoomLevels[self.zoomCurrent])
+              
+              # When the finger is released, we draw the zoomed view
+              if touchState == "ended":
+                self.superview['debugtext'].text = "Zooming in"
+                self.draw_zoomed_view(zoomFrom, zoomTo)
+              
+            # Debug text
+            if self.toolMode == 'lines' or self.toolMode == 'dots':
+              self.superview['debugtext'].text = "index:" + str(pixel.index) + ", pos:" + str(pixel.position) + ", touch:" + touchState + ", saveDelta:" + str(saveDelta)
+              
                                           
     def touch_began(self, touch):
         self.action(touch, "began")
@@ -350,20 +473,23 @@ class ColorView (ui.View):
       num = 0
       if self.palette_type == 'numeric':
         for subview in self['palette'].subviews:
-          subview.background_color = (self.c64color_palette[num][0]/255.0, self.c64color_palette[num][1]/255.0, self.c64color_palette[num][2]/255.0)
+          subview.background_color = color_to_1(self.c64color_palette[num])
           subview.title = self.c64hex[num]
           num = num + 1
         self.palette_type = "gradient"
         self.subviews[3].title = "0-F"
-        #self.superview['debugtext'].text = "Palette set to numeric"
+        try:
+          self.superview['debugtext'].text = "Palette set to numeric"
+        except Exception:
+          pass
       elif self.palette_type == 'gradient':
         for subview in self['palette'].subviews:
-          subview.background_color = (self.c64color_palette[self.c64color_gradient[num]][0]/255.0, self.c64color_palette[self.c64color_gradient[num]][1]/255.0, self.c64color_palette[self.c64color_gradient[num]][2]/255.0)
+          subview.background_color = color_to_1(self.c64color_palette[self.c64color_gradient[num]])
           subview.title = self.c64hex[self.c64color_gradient[num]]
           num = num + 1
         self.palette_type = "numeric"
         self.subviews[3].title = "grad"
-        #self.superview['debugtext'].text = "Palette set to gradient"
+        self.superview['debugtext'].text = "Palette set to gradient"
                   
     def get_color(self):
         return tuple(self.color[i] for i in 'rgba')
@@ -371,13 +497,12 @@ class ColorView (ui.View):
     def set_color(self, color=None):
         color = color or self.get_color()
         if self['current_color'].background_color == color:
-          self['current_color'].background_color = self.superview['editor'].current_color = self['bg_color'].background_color
           self['bg_color'].background_color = color
           self.superview['editor'].background_color = color
         else:
           self['current_color'].background_color = color
           self.superview['editor'].current_color = color
-          self.superview['debugtext'].text = "Color set to " + str(color)
+          self.superview['debugtext'].text = "BG color set to " + str(color)
 
     @ui.in_background
     def choose_color(self, sender):
@@ -419,21 +544,44 @@ class ToolbarView (ui.View):
         console.hud_alert('Editor has no image', 'error', 0.8)
     
     def paintdots(self, sender):
-      self.superview['editor'].paintMode = 'dots'
+      self.superview['editor'].toolMode = 'dots'
+      self.superview['editor'].zoom_frame.hidden = True
       self.superview['debugtext'].text = "Painting dots!"
       
     def paintlines(self, sender):
-      self.superview['editor'].paintMode = 'lines'
+      self.superview['editor'].toolMode = 'lines'
+      self.superview['editor'].zoom_frame.hidden = True
       self.superview['debugtext'].text = "Painting lines!"
       
     def zoom (self, sender):
-      self.superview['debugtext'].text = "setting scale " + str(self.pixel_editor.width)
-      self.superview['editor'].image_view.image.scale = 2.0  	
-                
+      self.superview['editor'].toolMode = 'zoom'
+      # Starting with a zoom level of 3
+      if self.superview['editor'].zoomState == False or self.superview['editor'].zoom_frame.hidden == True:
+        self.superview['editor'].zoomState = True
+        #self.superview['editor'].zoomLevel = 3
+        self.superview['editor'].zoom_frame.hidden = False
+        # Insert touch code for zoom view here
+        
+        self.superview['debugtext'].text = "Entering zoom mode"
+      elif self.superview['editor'].zoomState == True:
+        self.superview['editor'].zoomState = False
+        self.superview['editor'].zoom_frame.hidden = True
+        self.superview['debugtext'].text = "Leaving zoom mode"
+      
+    def changezoom (self, sender):
+      prevCenter = self.superview['editor'].get_zoom_center()
+      if self.superview['editor'].zoomCurrent == len(self.superview['editor'].zoomLevels)-1:
+        self.superview['editor'].zoomCurrent = 0
+      else:
+        self.superview['editor'].zoomCurrent += 1
+      self.superview['editor'].set_zoom_size()
+      self.superview['editor'].set_zoom_center(prevCenter)
+      self.superview['debugtext'].text = "Zoom level: " + str(self.superview['editor'].zoomLevels[self.superview['editor'].zoomCurrent])
+                                        
     def trash(self, sender):
         #if self.pixel_editor.has_image():
-        msg = 'Are you sure you want to clear the pixel editor? Image will not be saved.'
-        if console.alert('Trash', msg, 'Yes'):
+        trashMsg = 'Are you sure you want to clear the editor? Image will not be saved.'
+        if console.alert('Trash', trashMsg, 'Yes'):
             self.pixel_editor.reset()
         else: 
             self.show_error()
@@ -441,15 +589,15 @@ class ToolbarView (ui.View):
     @ui.in_background                        
     def load(self, sender):
       file_name = "images/" + console.input_alert('Load Image')
-      if os.path.isfile(file_name): 
+      if isfile(file_name): 
         im = png_to_pixels(self.pixel_editor.row, self.pixel_editor.column, file_name)
         print ("Loading '" + file_name + "' into editor.")
+        # Fill pixels with the data from the image
         for p in self.pixel_editor.pixels:
           pixelCol = im.getpixel(p.position)
-          # Convert image data from 0...255 to 0..1
-          p.colors.append((float(pixelCol[0])/255, float(pixelCol[1])/255, float(pixelCol[2])/255, 1.0))
+          p.colors.append(color_to_1(pixelCol))
           self.pixel_editor.pixel_path.append(p)
-        #Update image with our new pixels
+        # Update editor image with the new data
         old_img = self.superview['editor'].image_view.image
         with ui.ImageContext(self.pixel_editor.width, self.pixel_editor.height) as ctx:
           if old_img:
@@ -538,16 +686,3 @@ toolbar.pixel_editor = v['editor']
 for subview in toolbar.subviews:
     toolbar.init_actions(subview)
 v.present(style = 'full_screen', orientations=['landscape'], hide_title_bar=True)
-
-
-# Temp save image when exiting
-# Does not work, @atexit executes at startup, not at exit!
-@atexit.register
-def _exitcb():
-	print('Exit')
-try:
-	print("Pixels in memory: " + str(len(toolbar.pixel_editor.pixels)))
-	#pixels_to_png((toolbar.pixel_editor.pixels), 80, 100, "tempsave.png")
-	#toolbar.pixel_editor.tempsave()
-except Exception,e:
-	print str(e)
