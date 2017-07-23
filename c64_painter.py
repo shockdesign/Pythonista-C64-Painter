@@ -13,7 +13,7 @@
 # - Zoom mode
 # - Brush size
 # - Autosave every 20 seconds and at exit
-# - Find nearest colour when loading image
+# v Find nearest colour when loading image
 # - New undo-system. Hold a number of stroke undos, not per-pixel history.
 # - Set grid opacity
 # v Images saved in subfolder
@@ -42,11 +42,24 @@ import photos
 import clipboard
 import ui
 import Image
+#import ImageFilter
 
 from io import BytesIO
 from os.path import isfile
 from time import clock, sleep
 
+
+# Settings used across the editor
+class Settings (object):	
+    width = 320
+    height = 200
+    pixelSize = 2 # Made to be only 1 or 2
+    actualWidth = width / pixelSize
+    charSize = 8
+    maxCharCol = 3 # Max colors per character, EXCLUDING bg color
+    c64color_palette = [ (0, 0, 0), (255, 255, 255), (158, 59, 80), (133, 233, 209), (163, 70, 182), (93, 195, 94), (61, 51, 191), (249, 255, 126), (163, 98, 33), (103, 68, 0), (221, 121, 138), (86, 89, 86), (138, 140, 137), (182, 253, 184), (140, 128, 255), (195, 195, 193) ]
+    c64color_labels = [ "black", "white", "red", "cyan", "purple", "green", "blue", "yellow", "orange", "brown", "pink", "darkgrey", "grey", "lightgreen", "lightblue", "lightgrey"]
+    
 
 # Convert colors from [0,255] to [0,1]
 def color_to_1(color):
@@ -55,9 +68,23 @@ def color_to_1(color):
   elif len(color) == 3:
     return (color[0]/255.0, color[1]/255.0, color[2]/255.0, 1.0)
   else:
-    print "Color data seems wrong"
-    return False
+    print ("Color data seems wrong: " + str(color))
+    return (1, 0, 0, 1) # Red
 
+def closest_in_palette(matchColor):
+    i = 0
+    bestDelta = 1000
+    c = 0
+    for color in Settings.c64color_palette:
+        r = sorted((color[0],matchColor[0]))
+        g = sorted((color[1],matchColor[1]))
+        b = sorted((color[2],matchColor[2]))
+        delta = r[1]-r[0] + g[1]-g[0] + b[1]-b[0]
+        if delta < bestDelta:
+            i = c
+            bestDelta = delta
+        c = c + 1
+    return Settings.c64color_palette[i]
 
 # Check if number is even or odd, used by checkered paint mode
 def is_odd(x):
@@ -65,13 +92,13 @@ def is_odd(x):
 
 
 def xy_to_index(xcoord,ycoord):
-	arrayIndex = (ycoord * 160) + xcoord
+	arrayIndex = (ycoord*Settings.actualWidth) + xcoord
 	return arrayIndex
 
 
 def index_to_xy(arrayIndex):
-	ycoord = int(arrayIndex/160)
-	xcoord = arrayIndex - (160 * ycoord)
+	ycoord = int(arrayIndex/Settings.actualWidth)
+	xcoord = arrayIndex - (Settings.actualWidth * ycoord)
 	return (xcoord,ycoord)
 
 
@@ -105,30 +132,27 @@ def pixels_to_png(bg_color, pixels, width, height, filename):
     return True
 
 
-def png_to_pixels(width, height, filename):
-	im = Image.open(filename)
-	im = im.resize((width, height), Image.NEAREST)
-	# Find nearest colour to C64 palette using sympy.distance
-	
-	#im.save("temp_" + filename)
-	return im
+def png_to_img(width, height, filename):
+    im = Image.open(filename).convert('RGBA')
+    im = im.resize((Settings.actualWidth, Settings.height), Image.NEAREST)
+    return im
 
 
-# Settings used across the editor
-class Settings (object):	
-  width = 320
-  height = 200
-  pixelSize = 2
-  maxCharCol = 3 # Max colors per character, EXCLUDING bg color
-  
+# Takes index as an input at returns all indices for a character
+def get_char(index):
+    charArray = []
+    
+
+    return charArray
+
 
 # The Pixel, an array of these holds the current image
 class Pixel (object):
     def __init__(self, x, y, w, h):
-        self.rect = scene.Rect(x, y, w, h) # Rect class is used for bounding boxes and other rectangle values. (x,y) is its lower-left corner
+        self.rect = scene.Rect(x, y, w, h)  # Important: (x,y) is the lower-left corner
         self.colors = [(0, 0, 0, 0)]
         self.index = 0 						# Used to find neighbors
-        self.position = (x,y) 		# Used when writing images
+        self.position = (x,y) 		        # Used when writing images
         
     def used(self):
         return len(self.colors) > 1 and self.colors[-1] != (0, 0, 0, 0)
@@ -482,7 +506,22 @@ class PixelEditor(ui.View):
               pixel_path.fill()
               pixel_path.stroke()
               self.set_image(ctx.get_image())
-
+    
+    # Draw pixels from array on top of image
+    def draw_index_array(self, img, indexArray):
+        with ui.ImageContext(self.width, self.height) as ctx:
+            img.draw()
+            for i in indexArray:
+                p = self.pixels[i]
+                path = ui.Path.rect(*self.pixels[i].rect)
+                ui.set_color(p.colors[-1])
+                pixel_path = ui.Path.rect(p.rect[0],p.rect[1],p.rect[2],p.rect[3])
+                pixel_path.line_width = 0.5
+                pixel_path.fill()
+                pixel_path.stroke()
+            img = ctx.get_image()
+        return img
+             
     def action(self, touch, touchState):
         p = scene.Point(*touch.location)
         for pixel in self.pixels:
@@ -549,10 +588,6 @@ class PixelEditor(ui.View):
         
         
 class ColorView (ui.View):
-    c64color_palette = [ (0, 0, 0), (255, 255, 255), (158, 59, 80), (133, 233, 209), (163, 70, 182), (93, 195, 94), (61, 51, 191), (249, 255, 126), (163, 98, 33), (103, 68, 0), (221, 121, 138), (86, 89, 86), (138, 140, 137), (182, 253, 184), (140, 128, 255), (195, 195, 193) ]
-    
-    c64color_labels = [ "black", "white", "red", "cyan", "purple", "green", "blue", "yellow", "orange", "brown", "pink", "darkgrey", "grey", "lightgreen", "lightblue", "lightgrey"]
-    
     c64color_gradient = [0, 6, 9, 2, 11, 4, 8, 14, 12, 5, 10, 3, 15, 7, 13, 1]
         
     c64hex = ["00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "0A", "0B", "0C", "0D", "0E", "0F"]
@@ -582,7 +617,7 @@ class ColorView (ui.View):
       num = 0
       if self.palette_type == 'numeric':
         for subview in self['palette'].subviews:
-          subview.background_color = color_to_1(self.c64color_palette[num])
+          subview.background_color = color_to_1(Settings.c64color_palette[num])
           subview.title = self.c64hex[num]
           num = num + 1
         self.palette_type = "gradient"
@@ -593,7 +628,7 @@ class ColorView (ui.View):
           pass
       elif self.palette_type == 'gradient':
         for subview in self['palette'].subviews:
-          subview.background_color = color_to_1(self.c64color_palette[self.c64color_gradient[num]])
+          subview.background_color = color_to_1(Settings.c64color_palette[self.c64color_gradient[num]])
           subview.title = self.c64hex[self.c64color_gradient[num]]
           num = num + 1
         self.palette_type = "numeric"
@@ -702,8 +737,6 @@ class ToolbarView (ui.View):
       # Redraw canvas if we are zoomed in
       if self.superview['editor'].zoomState == True:
         self.superview['editor'].redraw_canvas()
-        
-      
                                         
     def trash(self, sender):
         #if self.pixel_editor.has_image():
@@ -717,26 +750,24 @@ class ToolbarView (ui.View):
     def load(self, sender):
       file_name = "images/" + console.input_alert('Load Image')
       if isfile(file_name): 
-        im = png_to_pixels(self.pixel_editor.row, self.pixel_editor.column, file_name)
         print ("Loading '" + file_name + "' into editor.")
-        # Fill pixels with the data from the image
-        for p in self.pixel_editor.pixels:
-          pixelCol = im.getpixel(p.position)
-          p.colors.append(color_to_1(pixelCol))
-          self.pixel_editor.pixel_path.append(p)
-        # Update editor image with the new data
-        old_img = self.superview['editor'].image_view.image
-        with ui.ImageContext(self.pixel_editor.width, self.pixel_editor.height) as ctx:
-          if old_img:
-              old_img.draw()
-          for p in self.pixel_editor.pixels:
-            #path = ui.Path.rect(*curPixel.rect)
-            ui.set_color(p.colors[-1])
-            pixel_path = ui.Path.rect(p.rect[0],p.rect[1],p.rect[2],p.rect[3]) # create path with rectangle
-            pixel_path.line_width = 0.5
-            pixel_path.fill()
-            pixel_path.stroke()
-          self.superview['editor'].set_image(ctx.get_image())
+        loadImg = png_to_img(self.pixel_editor.row, self.pixel_editor.column, file_name)
+        img = self.superview['editor'].create_new_image()
+        charRowSize = Settings.actualWidth * Settings.charSize
+        # We read and draw the image one character line at a time
+        for charRow in range(0, Settings.height/Settings.charSize):
+            indexArray = []
+            startIndex = charRow*charRowSize
+            endIndex = charRow*charRowSize + charRowSize
+            #print ("Importing subrow: " + str(startIndex) + ", " + str(endIndex))
+            for i in range(startIndex, endIndex):
+                indexArray.append(i)
+                pixelCol = loadImg.getpixel(self.pixel_editor.pixels[i].position)
+                # Find the closest color in the C64 palette
+                pixelCol = closest_in_palette(pixelCol)
+                self.superview['editor'].pixels[i].colors.append(color_to_1(pixelCol))
+            img = self.superview['editor'].draw_index_array(img, indexArray)
+            self.superview['editor'].set_image(img)
         print "Done loading!"
         return True
       else:
@@ -754,7 +785,7 @@ class ToolbarView (ui.View):
             elif option == 2:
               # Saves image to disk
               name = 'images/image_{}.png'
-              get_num = lambda x=1: get_num(x+1) if os.path.isfile(name.format(x)) else x
+              get_num = lambda x=1: get_num(x+1) if path.isfile(name.format(x)) else x
               file_name = name.format(get_num())
               pixels_to_png(self.superview['editor'].background_color, self.pixel_editor.pixels, self.pixel_editor.row*2, self.pixel_editor.column, file_name)
               console.hud_alert('Image saved as "{}"'.format(file_name))
