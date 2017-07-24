@@ -16,6 +16,7 @@
 # - Autosave every 20 seconds and at exit
 # - Enter name when saving image
 # v Find nearest colour when loading image
+# - Preview view that always draws small image, and moves away depending on draw position
 # - New undo-system. Hold a number of stroke undos, not per-pixel history.
 # - Set grid opacity
 # v Images saved in subfolder
@@ -32,11 +33,10 @@
 # Fixes/Bugs Todo:
 #
 # v Delete prevPixel after completing a stroke
-# - Move more variables to the outermost scope
-# - Small view should always show entire image
-# - General functions for converting 0-255 rgb to 0..1 rgb
+# - Code changes have resulted in multiple duplicate functions, go through and clean up
+# v Move more settings variables to the outermost scope
+# v General functions for converting 0-255 rgb to 0..1 rgb
 # - Zoom function sometimes ends by drawing a pixel, should not do that
-# - Remove unneeded functions
 
 import console
 import scene
@@ -53,6 +53,7 @@ from time import clock, sleep
 
 # Settings used across the editor
 class Settings (object):
+    undoSteps = 20
     width = 320
     height = 200
     pixelSize = 2 # Made to be only 1 or 2
@@ -159,8 +160,8 @@ class Pixel (object):
     def __init__(self, x, y, w, h):
         self.rect = scene.Rect(x, y, w, h)  # Important: (x,y) is the lower-left corner
         self.colors = [(0, 0, 0, 0)]
-        self.index = 0                                          # Used to find neighbors
-        self.position = (x,y)                   # Used when writing images
+        self.index = 0                      # Used to find neighbors
+        self.position = (x,y)               # Used when writing images
 
     def used(self):
         return len(self.colors) > 1 and self.colors[-1] != (0, 0, 0, 0)
@@ -255,13 +256,17 @@ class PixelEditor(ui.View):
         zoomFrom = (int((zoomCenter[0]/3-halfWidth)*0.5), int(zoomCenter[1]/3-halfHeight))
         zoomTo = (int((zoomCenter[0]/3+halfWidth)*0.5), int(zoomCenter[1]/3+halfHeight))
         return(zoomFrom,zoomTo)
-
-                  # Sets image in both views
+    
+    # Returns the currently displayed region, 0-based    
+    def get_current_region(self):
+        return (self.get_zoom_region()) if (self.zoomState == True) else ( (0, 0) , ((Settings.width/Settings.pixelSize)-1, Settings.height-1) )
+    
+    # Sets image in both views
     def set_image(self, image=None):
-            # Image is set to provided image or a new is created
+        # Image is set to provided image or a new is created
         image = image or self.create_new_image()
         if self.zoomState == False:
-                # Sets both main image and the smaller preview image
+            # Sets both main image and the smaller preview image
             self.image_view.image = self.superview['preview'].image = image
         if self.zoomState == True:
             ## Todo: Change this to draw separate image for preview
@@ -276,7 +281,7 @@ class PixelEditor(ui.View):
         self.pixel_path.append(pixel)
 
     # Initializes the image, draws the pixel array, image and grid lines
-    def create_grid_image(self):
+    def init_pixel_grid(self):
         s = self.width/self.row if self.row > self.column else self.height/self.column
         path = ui.Path.rect(0, 0, *self.frame[2:])
         charpath = ui.Path.rect(0, 0, *self.frame[2:])
@@ -300,15 +305,16 @@ class PixelEditor(ui.View):
             # Grid line per character
             for y in xrange(self.column/8):
                 for x in xrange(self.row/4):
-                    pixel = Pixel(x*s*8, y*s*8, s*8, s*8)
-                    charpath.append_path(ui.Path.rect(*pixel.rect))
+                    #pixel = Pixel(x*s*8, y*s*8, s*8, s*8)
+                    #charpath.append_path(ui.Path.rect(*pixel.rect))
+                    charpath.append_path(ui.Path.rect(x*s*8, y*s*8, s*8, s*8))
             ui.set_color((1,1,1,0.25))
             charpath.stroke()
             return ctx.get_image()
 
     def create_grid_layout(self):
         image_view = ui.ImageView(frame=self.bounds)
-        image_view.image = self.create_grid_image()
+        image_view.image = self.init_pixel_grid()
         self.add_subview(image_view)
         return image_view
 
@@ -327,57 +333,55 @@ class PixelEditor(ui.View):
 
     def position_pixels(self):
         # Upper right and lower left corner of pixels in the view
-        (startPos, endPos) = (self.get_zoom_region()) if (self.zoomState == True) else ( (0, 0) , ((Settings.width/Settings.pixelSize)-1, Settings.height-1) )
-
-        # Array keeping our the pixels in the view
-        viewPixels = []
-
-        # Pixel scale
-        s = self.width / (endPos[0]-startPos[0]+1) / Settings.pixelSize
-
+        (startPos, endPos) = self.get_current_region()
+        pixelScale = self.width / (endPos[0]-startPos[0]+1) / Settings.pixelSize # Pixel scale
+        viewPixels = []     # Array holding the pixels in the view
         # Move all pixels off-screen
         if self.zoomState == True:
-            for index in range(0,len(self.pixels)):
+            for index in xrange(0,len(self.pixels)):
                 self.pixels[index].rect.x = self.pixels[index].rect.y = -100
-
         # Position zoomed pixels over canvas
-        for y in range(startPos[1],endPos[1]+1):
-            for x in range(startPos[0],endPos[0]+1):
+        for y in xrange(startPos[1],endPos[1]+1):
+            for x in xrange(startPos[0],endPos[0]+1):
                 curPixel = self.pixels[xy_to_index(x,y)]
                 viewPixels.append(curPixel.index)
                 # rect.x, rect.y is components LOWER-left corner
-                curPixel.rect.x = (x-startPos[0]) * s * Settings.pixelSize
-                curPixel.rect.y = (y-startPos[1]) * s
-                curPixel.rect.width = s * Settings.pixelSize
-                curPixel.rect.height = s
-
+                curPixel.rect.x = (x-startPos[0]) * pixelScale * Settings.pixelSize
+                curPixel.rect.y = (y-startPos[1]) * pixelScale
+                curPixel.rect.width = pixelScale * Settings.pixelSize
+                curPixel.rect.height = pixelScale
         return viewPixels
-
-
+    
+    def draw_grid_image(self):
+        (startPos, endPos) = self.get_current_region()
+        charSize = Settings.charSize
+        pixelScale =  self.width/(endPos[0]-startPos[0]+1)/Settings.pixelSize #self.height/Settings.height
+        #s = self.width/self.row if self.row > self.column else self.height/self.column
+        pixelGrid = ui.Path.rect(0, 0, *self.frame[2:])
+        characterGrid = ui.Path.rect(0, 0, *self.frame[2:])
+        with ui.ImageContext(*self.frame[2:]) as ctx:
+            # Fills entire grid with empty color
+            ui.set_color((0, 0, 0, 0))
+            pixelGrid.fill()
+            pixelGrid.line_width = 1
+            # Grid line per pixel
+            for y in xrange(startPos[1], endPos[1]+1):
+                for x in xrange(startPos[0], endPos[0]+1):
+                    pixelGrid.append_path(ui.Path.rect((x-startPos[0])*pixelScale*2, (y-startPos[1])*pixelScale, pixelScale*2, pixelScale))
+            ui.set_color((0.5,0.5,0.5,0.5))
+            pixelGrid.stroke()
+            # Grid line per character
+            for y in xrange(int(startPos[1]/charSize)*charSize, endPos[1]+1, charSize):
+                for x in xrange(int(startPos[0]/charSize*charSize), endPos[0]+1,4):
+                    characterGrid.append_path(ui.Path.rect((x-startPos[0])*pixelScale*2, (y-startPos[1])*pixelScale, pixelScale*charSize, pixelScale*charSize))
+            ui.set_color((1,1,1,0.5))
+            characterGrid.stroke()
+            return ctx.get_image()    
+        
     # Redraws the canvas
     def redraw_canvas(self):
-
-        #(startPos, endPos) = self.get_zoom_region()
-
-        #zoomPixels = [] # Array keeping our current zoomed pixel indices
-        #s = self.width / (endPos[0]-startPos[0]+1) / Settings.pixelSize # Pixel scale
-
-        # Move all pixels off-screen
-        #for index in range(0,len(self.pixels)):
-        #  self.pixels[index].rect.x = self.pixels[index].rect.y = -100
-        # Position zoomed pixels over canvas
-        #for y in range(startPos[1],endPos[1]+1):
-        #  for x in range(startPos[0],endPos[0]+1):
-        #    curPixel = self.pixels[xy_to_index(x,y)]
-        #    zoomPixels.append(curPixel.index)
-                # rect.x, rect.y is components LOWER-left corner
-        #    curPixel.rect.x = (x-startPos[0]) * s * Settings.pixelSize
-        #    curPixel.rect.y = (y-startPos[1]) * s
-        #    curPixel.rect.width = s * Settings.pixelSize
-        #    curPixel.rect.height = s
-
+        # Gets the pixels covered by the current zoom level
         zoomPixels = self.position_pixels()
-
         # Redraw view
         self.image_view.image = self.create_new_image()
         with ui.ImageContext(self.width, self.height) as ctx:
@@ -391,9 +395,9 @@ class PixelEditor(ui.View):
                 pixel_path.stroke()
             self.image_view.image = ctx.get_image()
             ## Todo: insert drawing of preview window:
-
         # Redraw grid
-        self.grid_layout.hidden = True # Hide grid temporarily
+        self.grid_layout.image = self.draw_grid_image()
+        #self.grid_layout.hidden = True # Hide grid temporarily
         return True
 
     # Redraws the entire image based on what is stored in
@@ -415,7 +419,7 @@ class PixelEditor(ui.View):
     def reset(self, row=None, column=None):
         self.pixels = []
         self.pixel_path = []
-        self.grid_layout.image = self.create_grid_image()
+        self.grid_layout.image = self.init_pixel_grid()
         self.set_image()
 
     def undo(self):
@@ -470,7 +474,7 @@ class PixelEditor(ui.View):
             yIncr = 0 if yDist == 0 else (float(xDist)/yDist)
             xIncr = 0 if xDist == 0 else (float(yDist)/xDist)
             # Update all pixel objects along the drawn line
-            for c in range(1, max(xDist,yDist)):
+            for c in xrange(1, max(xDist,yDist)):
                 if yDist >= xDist:
                     #self.current_color = 'yellow' # debug color
                     curPixel = self.pixels[ xy_to_index( int(xStart+(yIncr*c*xDir)+0.5), int(yStart+(c*yDir)) ) ]
@@ -484,7 +488,7 @@ class PixelEditor(ui.View):
             old_img = self.image_view.image
             with ui.ImageContext(self.width, self.height) as ctx:
                 if old_img:
-                    old_img.draw() # Draw image into rectangle in current context, no parameters means natural size
+                    old_img.draw()
                 for curPixel in linePixels:
                     path = ui.Path.rect(*curPixel.rect)
                     ui.set_color(self.current_color)
@@ -515,7 +519,7 @@ class PixelEditor(ui.View):
                     pixel_path.stroke()
                     self.set_image(ctx.get_image())
 
-    # Draw pixels from array on top of image
+    # Draw pixels from array on top of image (ui.image)
     def draw_index_array(self, img, indexArray):
         with ui.ImageContext(self.width, self.height) as ctx:
             img.draw()
@@ -764,12 +768,12 @@ class ToolbarView (ui.View):
             img = self.superview['editor'].create_new_image()
             charRowSize = Settings.actualWidth * Settings.charSize
             # We read and draw the image one character line at a time
-            for charRow in range(0, Settings.height/Settings.charSize):
+            for charRow in xrange(0, Settings.height/Settings.charSize):
                 indexArray = []
                 startIndex = charRow*charRowSize
                 endIndex = charRow*charRowSize + charRowSize
                 #print ("Importing subrow: " + str(startIndex) + ", " + str(endIndex))
-                for i in range(startIndex, endIndex):
+                for i in xrange(startIndex, endIndex):
                     indexArray.append(i)
                     pixelCol = loadImg.getpixel(self.pixel_editor.pixels[i].position)
                     # Find the closest color in the C64 palette
