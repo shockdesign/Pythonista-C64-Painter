@@ -10,21 +10,22 @@
 #
 #
 # Features Todo:
-# - Zoom mode
-# - Brush size
-# - New icons
-# - Autosave every 20 seconds and at exit
+# v Zoom mode
+# v Autosave on user defined seconds and at exit
+# - Load last autosave when opening editor
 # - Enter name when saving image
+# - New icons
 # v Find nearest colour when loading image
-# - Preview view that always draws small image, and moves away depending on draw position
-# - New undo-system. Hold a number of stroke undos, not per-pixel history.
 # - Set grid opacity
+# - Preview view that always draws small image, and moves away depending on draw position
+# - Brush size
+# - New undo-system. Hold a number of stroke undos, not per-pixel history.
 # v Images saved in subfolder
 # v Move load/save icons to start of icon-row
 # v Selecting colour twice sets BG colour
 # - Make colour set to BG draw as transparent?
 # - Clash test tool button
-# - Draw checkered/simple dither
+# v Draw checkered/simple dither
 # - Add CRT-effect to preview
 # v Full-screen with no Pythonista title bar
 # v Switch between gradient and 0-F order of colours
@@ -53,7 +54,9 @@ from time import clock, sleep
 
 # Settings used across the editor
 class Settings (object):
-    undoSteps = 20
+    undoSteps = 10
+    autoSaveTime = 30 # Number of seconds between autosaves
+    imageName = ""
     width = 320
     height = 200
     pixelSize = 2 # Made to be only 1 or 2
@@ -123,19 +126,19 @@ def ui_to_pil(img):
 
 def pixels_to_png(bg_color, pixels, width, height, filename):
     # Create image
-    bgColor = (int(bg_color[0]*255), int(bg_color[1]*255), int(bg_color[2]*255))
+    bgColor = color_to_255(bg_color)
     im = Image.new("RGB", (width, height), bgColor)
-    debugcounter = 0
+    #debugcounter = 0
     # Fill with pixels
     for p in pixels:
-        # convert pixel data from RGBA 0..1 to RGB 0..255
         pixelCol = bgColor
         if p.colors[-1][3] != 0:
-            pixelCol = (int(p.colors[-1][0]*255), int(p.colors[-1][1]*255), int(p.colors[-1][2]*255))
+            # convert pixel data from RGBA 0..1 to RGB 0..255
+            pixelCol = color_to_255(p.colors[-1])
             im.putpixel((int(p.position[0]*2),p.position[1]),pixelCol)
             im.putpixel((int(p.position[0]*2)+1,p.position[1]),pixelCol)
-        if debugcounter < 20: print ("Color at " + str(p.position) + ": " + str(p.colors[-1]))
-        debugcounter = debugcounter + 1
+        #if debugcounter < 20: print ("Color at " + str(p.position) + ": " + str(p.colors[-1]))
+        #debugcounter = debugcounter + 1
     # save
     im.save(filename)
     return True
@@ -427,7 +430,29 @@ class PixelEditor(ui.View):
             pixel = self.pixel_path.pop() # remove last array item
             pixel.undo()
             self.set_image(self.create_image_from_history())
-
+    
+    def tempsave(self, prefix=""):
+        file_name = "images/" + prefix + "_tempsave.png"
+        print('Saving temp image ' + file_name)
+        pixels_to_png(self.background_color, self.pixels, Settings.width, Settings.height, file_name)
+        print('Saved!')
+        return True
+        
+        
+        # This does not work.. Why??
+        #    image = self.image_view.image.get_image()
+        #    print('Image type is: ' + str(type(image)))
+        #    file_name = "images/" + prefix + "_tempsave.png"
+        #    print('Filename: ' + file_name)
+        #    with open(file_name, 'w') as f:
+        #        print("Step 2")
+        #        ui_to_pil(image).save(f, 'png')
+        #        print("Step 3")
+        #    print('Image saved as ' + file_name)
+        #else:
+        #    print ("No image found!")
+        #    exit()
+    
     def pencil(self, pixel):
         if pixel.colors[-1] != self.current_color:
             pixel.colors.append(self.current_color)
@@ -540,15 +565,14 @@ class PixelEditor(ui.View):
             if p in pixel.rect:
             # Auto-save image every 20 seconds of painting
                 saveDelta = int(clock()) - self.lastSave
-                if saveDelta > 20:
-                    ## Todo: Add autosave here
-                    print 'Autosave'
+                if saveDelta > Settings.autoSaveTime:
+                    self.superview['debugtext'].text = "Autosaving..."
+                    self.tempsave(Settings.imageName)
                     self.lastSave = int(clock())
                 if self.toolMode == 'dots':
                     self.drawpixel(pixel)
                     if self.toolMode == 'lines' or self.toolMode == 'dots':
-                        self.superview['debugtext'].text = "index:" + str(pixel.index) + ", pos:" + str(pixel.position) + ", touch:" + touchState + ", saveDelta:" + str(saveDelta)
-
+                        self.superview['debugtext'].text = "index:" + str(pixel.index) + ", pos:" + str(pixel.position) + ", touch:" + touchState + ", autosave:" + str(Settings.autoSaveTime-saveDelta)
                 elif self.toolMode == 'lines':
                     if touchState == 'began':
                         self.prevPixel == []
@@ -558,8 +582,7 @@ class PixelEditor(ui.View):
                         ## Todo: update preview image at end of each stroke
                         self.prevPixel = []
                     if self.toolMode == 'lines' or self.toolMode == 'dots':
-                        self.superview['debugtext'].text = "index:" + str(pixel.index) + ", pos:" + str(pixel.position) + ", touch:" + touchState + ", saveDelta:" + str(saveDelta)
-
+                        self.superview['debugtext'].text = "index:" + str(pixel.index) + ", pos:" + str(pixel.position) + ", touch:" + touchState + ", autosave:" + str(Settings.autoSaveTime-saveDelta)
                 elif self.toolMode == 'zoom':
                     self.set_zoom_center(touch.location)
 
@@ -809,29 +832,16 @@ class ToolbarView (ui.View):
             self.show_error()
 
     def exit(self, sender):
+        try:
+            self.superview['editor'].tempsave()
+        except Exception,e: 
+            print str(e)
         msg = 'Are you sure you want to quit the pixel editor?'
         if console.alert('Quit', msg, 'Yes'):
             self.superview.close()
         else:
             self.show_error()
         return True
-
-    def tempsave(self):
-        print('Saving temp image...')
-        if self.pixel_editor.has_image():
-        # This does not work.. Why??
-            image = self.pixel_editor.image_view.get_image()
-            print('Image type is: ' + str(type(image)))
-            file_name = 'images/tempsave.png'
-            print('Filename: ' + file_name)
-            with open(file_name, 'w') as f:
-                print("Step 2")
-                ui_to_pil(image).save(f, 'png')
-                print("Step 3")
-            print('Image saved as ' + file_name)
-        else:
-            print ("No image found!")
-            exit()
 
     def undo(self, sender):
         self.pixel_editor.undo()
