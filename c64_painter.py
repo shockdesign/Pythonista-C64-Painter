@@ -3,7 +3,7 @@
 # Pythonista C64 Painter AKA Redux Paint
 #
 # Personal project for learning Python
-# Warning, in these waters there be monsterously messy code!
+# Warning, here be monstrous code and vicious rabbits.
 #
 # Based on the Pythonista Pixel Editor by Sebastian Jarsve
 # Modified by Rune Spaans
@@ -13,10 +13,11 @@
 # v Zoom mode
 # v Autosave on user defined seconds and at exit
 # v Load last autosave when opening editor
+# v Set grid opacity
 # - Enter name when saving image
 # - New icons
+# - Brush type has a switch type button
 # v Find nearest colour when loading image
-# - Set grid opacity
 # - Preview view that always draws small image
 # - Preview moves away depending on draw position
 # - Brush size
@@ -122,8 +123,9 @@ def pil_to_ui(img):
         return ui.Image.from_data(bIO.getvalue())
 
 
+# Convert from ui.image to PIL Image
 def ui_to_pil(img):
-    return Image.open(io.BytesIO(img.to_png()))
+    return Image.open(BytesIO(img.to_png()))
 
 
 def pixels_to_png(bg_color, pixels, width, height, filename):
@@ -133,9 +135,9 @@ def pixels_to_png(bg_color, pixels, width, height, filename):
     # Fill with pixels
     for p in pixels:
         pixelCol = bgColor
-        if p.colors[-1][3] != 0:
+        if p.color[3] != 0:
             # convert pixel data from RGBA 0..1 to RGB 0..255
-            pixelCol = color_to_255(p.colors[-1])
+            pixelCol = color_to_255(p.color)
             im.putpixel((int(p.position[0]*2),p.position[1]),pixelCol)
             im.putpixel((int(p.position[0]*2)+1,p.position[1]),pixelCol)
     im.save(filename)
@@ -162,17 +164,19 @@ def get_char(index):
 class Pixel (object):
     def __init__(self, x, y, w, h):
         self.rect = scene.Rect(x, y, w, h)  # Important: (x,y) is the lower-left corner
-        self.colors = [(0, 0, 0, 0)]
+        self.color = (0, 0, 0, 0)
         self.index = 0                      # Used to find neighbors
         self.position = (x,y)               # Used when writing images
 
-    def used(self):
-        return len(self.colors) > 1 and self.colors[-1] != (0, 0, 0, 0)
 
-    def undo(self):
-        if len(self.colors) > 1:
-            self.colors.pop() # Removes last item in colors array
-
+# The undo stack, keeps all data for undoing strokes        
+class UndoStack (object):
+    undoData = []
+    
+    def clearStack():
+        undoData = []
+        return True
+                
 
 class PixelEditor(ui.View):
     # 1: 1x1 pixel, 2: 1x2 pixels, 3: 2x4 pixels, 4: character (4x8 pixels)
@@ -195,7 +199,6 @@ class PixelEditor(ui.View):
         self.column = Settings.height
         self.lastSave = int(clock())
         self.pixels = []
-        self.pixel_path = []
         self.image_view = self.create_image_view()
         self.grid_layout = self.create_grid_layout()
         self.zoom_frame = self.create_zoom_frame()
@@ -214,11 +217,15 @@ class PixelEditor(ui.View):
             return False
         else: return True
 
+    # Check if image is not all black
     def has_image(self):
-        if self.pixel_path:
-            if [p for p in self.pixel_path if p.used()]:
-                return True
-        return False
+        im = ui_to_pil(self.image_view.image)
+        extrema = im.convert("L").getextrema()
+        if extrema == (0, 0):
+            # all black
+            return False
+        else:
+            return True
 
     def create_zoom_frame(self):
         zoomWidth = self.width / self.zoomLevels[self.zoomCurrent]
@@ -286,9 +293,6 @@ class PixelEditor(ui.View):
     def get_image(self):
         image = self.image_view.image
         return image
-
-    def add_history(self, pixel):
-        self.pixel_path.append(pixel)
 
     # Initializes the image, draws the pixel array, image and grid lines
     def init_pixel_grid(self):
@@ -398,7 +402,7 @@ class PixelEditor(ui.View):
             for i in zoomPixels:
                 p = self.pixels[i]
                 #path = ui.Path.rect(*curPixel.rect)
-                ui.set_color(p.colors[-1])
+                ui.set_color(p.color)
                 pixel_path = ui.Path.rect(p.rect[0],p.rect[1],p.rect[2],p.rect[3])
                 pixel_path.line_width = 0.5
                 pixel_path.fill()
@@ -410,40 +414,21 @@ class PixelEditor(ui.View):
         #self.grid_layout.hidden = True # Hide grid temporarily
         return True
 
-    # Redraws the entire image based on what is stored in
-    # pixel_editor.pixel_path. Done after undo.
-    def create_image_from_history(self):
-        path = ui.Path.rect(*self.frame)
-        with ui.ImageContext(self.width, self.height) as ctx:
-            for pixel in self.pixel_path:
-                if not pixel.used():
-                    continue
-                ui.set_color(pixel.colors[-1])
-                pixel_path = ui.Path.rect(*pixel.rect)
-                pixel_path.line_width = 0.5
-                pixel_path.fill()
-                pixel_path.stroke()
-            img = ctx.get_image()
-            return img
-
     def reset(self, row=None, column=None):
         self.pixels = []
-        self.pixel_path = []
+        #self.pixel_path = []
         self.grid_layout.image = self.init_pixel_grid()
         self.set_image()
     
-    def undo(self):
-        if self.pixel_path:
-            pixel = self.pixel_path.pop() # remove last array item
-            pixel.undo()
-            self.set_image(self.create_image_from_history())
-    
     def tempsave(self, prefix=""):
-        file_name = "images/" + prefix + "_tempsave.png"
-        print('Saving temp image ' + file_name)
-        pixels_to_png(self.background_color, self.pixels, Settings.width, Settings.height, file_name)
-        print('Saved!')
-        return True
+        if self.pixel_editor.has_image():
+            file_name = "images/" + prefix + "_tempsave.png"
+            print('Saving temp image ' + file_name)
+            pixels_to_png(self.background_color, self.pixels, Settings.width, Settings.height, file_name)
+            print('Saved!')
+            return True
+        else:
+            self.show_error()
 
     def loadimage(self, file_name):
         loadImg = file_to_img(Settings.height, Settings.width, file_name)
@@ -460,15 +445,15 @@ class PixelEditor(ui.View):
                 pixelCol = loadImg.getpixel(self.pixels[i].position)
                 # Find the closest color in the C64 palette
                 pixelCol = closest_in_palette(pixelCol)
-                self.pixels[i].colors.append(color_to_1(pixelCol))
+                self.pixels[i].color = color_to_1(pixelCol)
             img = self.draw_index_array(img, indexArray)
             self.set_image(img)
         return True
         
     def pencil(self, pixel):
-        if pixel.colors[-1] != self.current_color:
-            pixel.colors.append(self.current_color)
-            self.pixel_path.append(pixel)
+        if pixel.color != self.current_color:
+            pixel.color = self.current_color
+            #self.pixel_path.append(pixel)
             old_img = self.image_view.image
             path = ui.Path.rect(*pixel.rect)
             with ui.ImageContext(self.width, self.height) as ctx:
@@ -518,8 +503,8 @@ class PixelEditor(ui.View):
                 else:
                     #self.current_color = 'purple' # debug color
                     curPixel = self.pixels[ xy_to_index( xStart+(xDir*c), int(yStart+(xIncr*c*yDir)) ) ]
-                if curPixel.colors[-1] != self.current_color and self.checkDither(curPixel.position):
-                    curPixel.colors.append(self.current_color)
+                if curPixel.color != self.current_color and self.checkDither(curPixel.position):
+                    curPixel.color = self.current_color
                     linePixels.append(curPixel)
             # Redraw the image
             old_img = self.image_view.image
@@ -539,11 +524,11 @@ class PixelEditor(ui.View):
         return True
 
     def drawpixel(self, pixel):
-        if pixel.colors[-1] != self.current_color:
+        if pixel.color != self.current_color:
                 #if self.drawDithered == False or (is_odd(pixel.position[0]) and is_odd(pixel.position[1]) or is_odd(pixel.position[0]+1) and is_odd(pixel.position[1]+1)):
             if self.checkDither(pixel.position):
-                pixel.colors.append(self.current_color)
-                self.pixel_path.append(pixel)
+                pixel.color = self.current_color
+                #self.pixel_path.append(pixel)
                 old_img = self.image_view.image
                 path = ui.Path.rect(*pixel.rect)
                 with ui.ImageContext(self.width, self.height) as ctx:
@@ -563,7 +548,7 @@ class PixelEditor(ui.View):
             for i in indexArray:
                 p = self.pixels[i]
                 path = ui.Path.rect(*self.pixels[i].rect)
-                ui.set_color(p.colors[-1])
+                ui.set_color(p.color)
                 pixel_path = ui.Path.rect(p.rect[0],p.rect[1],p.rect[2],p.rect[3])
                 pixel_path.line_width = 0.5
                 pixel_path.fill()
@@ -755,6 +740,13 @@ class ToolbarView (ui.View):
             self.subviews[0].subviews[11].background_color = '#bababa'
             self.subviews[0].subviews[11].tint_color = 'black'
 
+    def grid (self, sender):
+        self.superview['editor'].grid_layout.alpha = self.superview['editor'].grid_layout.alpha - 0.5
+        if self.superview['editor'].grid_layout.alpha < 0:
+            self.superview['editor'].grid_layout.alpha = 1.0
+        #self.superview['editor'].grid_layout.hidden = not self.superview['editor'].grid_layout.hidden
+        return True
+
     def zoom (self, sender):
         if self.superview['editor'].zoomState == False:
             self.superview['editor'].zoom_frame.hidden = False
@@ -787,10 +779,10 @@ class ToolbarView (ui.View):
             self.superview['editor'].redraw_canvas()
 
     def trash(self, sender):
-            #if self.pixel_editor.has_image():
-        trashMsg = 'Are you sure you want to clear the editor? Image will not be saved.'
-        if console.alert('Trash', trashMsg, 'Yes'):
-            self.pixel_editor.reset()
+        if self.pixel_editor.has_image():
+            trashMsg = 'Are you sure you want to clear the editor? Image will not be saved.'
+            if console.alert('Trash', trashMsg, 'Yes'):
+                self.pixel_editor.reset()
         else:
             self.show_error()
 
@@ -798,6 +790,8 @@ class ToolbarView (ui.View):
     def load(self, sender):
         file_name = "images/" + console.input_alert('Load Image')
         if isfile(file_name):
+            if self.superview['editor'].zoomState == True:
+                self.zoom(sender)
             print ("Loading '" + file_name + "' into editor.")
             self.superview['editor'].loadimage(file_name)
             print "Done loading!"
@@ -840,18 +834,21 @@ class ToolbarView (ui.View):
         return True
 
     def undo(self, sender):
-        self.pixel_editor.undo()
+        ## Todo: undo function!
+        ##
+        print "Undo!"
+        #self.pixel_editor.undo()
 
     @ui.in_background
     def preview(self, sender):
         if self.pixel_editor.has_image():
             v = ui.ImageView(frame=(100,100,320,200))
-
+    
             # CRT Emulation
             im = self.pixel_editor.get_image()
             # insert CRT emulation here
             v.image = im
-
+    
             v.width, v.height = v.image.size
             v.present('popover', popover_location=(100, 100), hide_title_bar=True)
         else:
@@ -863,9 +860,7 @@ toolbar = v['toolbar']
 toolbar.pixel_editor = v['editor']
 for subview in toolbar.subviews:
     toolbar.init_actions(subview)
+v.present(style = 'full_screen', orientations=['landscape'], hide_title_bar=True)
 # If a temporary save exist, we load it into the editor
 if isfile("images/_tempsave.png"):
     v['editor'].loadimage("images/_tempsave.png")
-v.present(style = 'full_screen', orientations=['landscape'], hide_title_bar=True)
-
-
