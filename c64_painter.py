@@ -12,12 +12,13 @@
 # Features Todo:
 # v Zoom mode
 # v Autosave on user defined seconds and at exit
-# - Load last autosave when opening editor
+# v Load last autosave when opening editor
 # - Enter name when saving image
 # - New icons
 # v Find nearest colour when loading image
 # - Set grid opacity
-# - Preview view that always draws small image, and moves away depending on draw position
+# - Preview view that always draws small image
+# - Preview moves away depending on draw position
 # - Brush size
 # - New undo-system. Hold a number of stroke undos, not per-pixel history.
 # v Images saved in subfolder
@@ -82,6 +83,7 @@ def color_to_255(color):
     return (int(color[0]*255), int(color[1]*255), int(color[2]*255))
 
 
+# Returns the closest to given color in the C64-palette
 def closest_in_palette(matchColor):
     i = 0
     bestDelta = 1000
@@ -128,7 +130,6 @@ def pixels_to_png(bg_color, pixels, width, height, filename):
     # Create image
     bgColor = color_to_255(bg_color)
     im = Image.new("RGB", (width, height), bgColor)
-    #debugcounter = 0
     # Fill with pixels
     for p in pixels:
         pixelCol = bgColor
@@ -137,9 +138,6 @@ def pixels_to_png(bg_color, pixels, width, height, filename):
             pixelCol = color_to_255(p.colors[-1])
             im.putpixel((int(p.position[0]*2),p.position[1]),pixelCol)
             im.putpixel((int(p.position[0]*2)+1,p.position[1]),pixelCol)
-        #if debugcounter < 20: print ("Color at " + str(p.position) + ": " + str(p.colors[-1]))
-        #debugcounter = debugcounter + 1
-    # save
     im.save(filename)
     return True
 
@@ -154,7 +152,9 @@ def file_to_img(width, height, filename):
 # Takes index as an input at returns all indices for a character
 def get_char(index):
     charArray = []
-
+    ## Coming soon!
+    #
+    # 
     return charArray
 
 
@@ -201,7 +201,13 @@ class PixelEditor(ui.View):
         self.zoom_frame = self.create_zoom_frame()
         self.grid_opacity = 1.0
         self.current_color = (1, 1, 1, 1)
-
+        ## Todo: Loading auto-save should probably be here.
+        ## But it does not work, probably because the preview 
+        ## view hasn't been created yet?
+        #if isfile("images/_tempsave.png"):
+        #    self.loadimage("images/_tempsave.png")
+        
+        
     def checkDither(self, position):
         if self.drawDithered == False: return True
         if is_odd(position[0]) and is_odd(position[1]) or is_odd(position[0]+1) and is_odd(position[1]+1):
@@ -270,7 +276,8 @@ class PixelEditor(ui.View):
         image = image or self.create_new_image()
         if self.zoomState == False:
             # Sets both main image and the smaller preview image
-            self.image_view.image = self.superview['preview'].image = image
+            self.image_view.image = image
+            self.superview['preview'].image = image # Why does this only work after a while
         if self.zoomState == True:
             ## Todo: Change this to draw separate image for preview
             ## Or, draw small zoomed image and comp over?
@@ -424,7 +431,7 @@ class PixelEditor(ui.View):
         self.pixel_path = []
         self.grid_layout.image = self.init_pixel_grid()
         self.set_image()
-
+    
     def undo(self):
         if self.pixel_path:
             pixel = self.pixel_path.pop() # remove last array item
@@ -437,22 +444,27 @@ class PixelEditor(ui.View):
         pixels_to_png(self.background_color, self.pixels, Settings.width, Settings.height, file_name)
         print('Saved!')
         return True
+
+    def loadimage(self, file_name):
+        loadImg = file_to_img(Settings.height, Settings.width, file_name)
+        img = self.create_new_image()
+        charRowSize = Settings.actualWidth * Settings.charSize
+        # We read and draw the image one character line at a time
+        for charRow in xrange(0, Settings.height/Settings.charSize):
+            indexArray = []
+            startIndex = charRow*charRowSize
+            endIndex = charRow*charRowSize + charRowSize
+            #print ("Importing subrow: " + str(startIndex) + ", " + str(endIndex))
+            for i in xrange(startIndex, endIndex):
+                indexArray.append(i)
+                pixelCol = loadImg.getpixel(self.pixels[i].position)
+                # Find the closest color in the C64 palette
+                pixelCol = closest_in_palette(pixelCol)
+                self.pixels[i].colors.append(color_to_1(pixelCol))
+            img = self.draw_index_array(img, indexArray)
+            self.set_image(img)
+        return True
         
-        
-        # This does not work.. Why??
-        #    image = self.image_view.image.get_image()
-        #    print('Image type is: ' + str(type(image)))
-        #    file_name = "images/" + prefix + "_tempsave.png"
-        #    print('Filename: ' + file_name)
-        #    with open(file_name, 'w') as f:
-        #        print("Step 2")
-        #        ui_to_pil(image).save(f, 'png')
-        #        print("Step 3")
-        #    print('Image saved as ' + file_name)
-        #else:
-        #    print ("No image found!")
-        #    exit()
-    
     def pencil(self, pixel):
         if pixel.colors[-1] != self.current_color:
             pixel.colors.append(self.current_color)
@@ -787,23 +799,7 @@ class ToolbarView (ui.View):
         file_name = "images/" + console.input_alert('Load Image')
         if isfile(file_name):
             print ("Loading '" + file_name + "' into editor.")
-            loadImg = file_to_img(self.pixel_editor.row, self.pixel_editor.column, file_name)
-            img = self.superview['editor'].create_new_image()
-            charRowSize = Settings.actualWidth * Settings.charSize
-            # We read and draw the image one character line at a time
-            for charRow in xrange(0, Settings.height/Settings.charSize):
-                indexArray = []
-                startIndex = charRow*charRowSize
-                endIndex = charRow*charRowSize + charRowSize
-                #print ("Importing subrow: " + str(startIndex) + ", " + str(endIndex))
-                for i in xrange(startIndex, endIndex):
-                    indexArray.append(i)
-                    pixelCol = loadImg.getpixel(self.pixel_editor.pixels[i].position)
-                    # Find the closest color in the C64 palette
-                    pixelCol = closest_in_palette(pixelCol)
-                    self.superview['editor'].pixels[i].colors.append(color_to_1(pixelCol))
-                img = self.superview['editor'].draw_index_array(img, indexArray)
-                self.superview['editor'].set_image(img)
+            self.superview['editor'].loadimage(file_name)
             print "Done loading!"
             return True
         else:
@@ -849,7 +845,7 @@ class ToolbarView (ui.View):
     @ui.in_background
     def preview(self, sender):
         if self.pixel_editor.has_image():
-            v = ui.ImageView(frame=(100,400,320,200))
+            v = ui.ImageView(frame=(100,100,320,200))
 
             # CRT Emulation
             im = self.pixel_editor.get_image()
@@ -857,14 +853,19 @@ class ToolbarView (ui.View):
             v.image = im
 
             v.width, v.height = v.image.size
-            v.present('popover', popover_location=(200, 275), hide_title_bar=True)
+            v.present('popover', popover_location=(100, 100), hide_title_bar=True)
         else:
             self.show_error()
+
 
 v = ui.load_view('c64_painter')
 toolbar = v['toolbar']
 toolbar.pixel_editor = v['editor']
 for subview in toolbar.subviews:
     toolbar.init_actions(subview)
+# If a temporary save exist, we load it into the editor
+if isfile("images/_tempsave.png"):
+    v['editor'].loadimage("images/_tempsave.png")
 v.present(style = 'full_screen', orientations=['landscape'], hide_title_bar=True)
+
 
