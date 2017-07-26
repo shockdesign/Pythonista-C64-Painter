@@ -17,11 +17,12 @@
 # - Enter name when saving image
 # - New icons
 # - Brush type has a switch type button
-# v Find nearest colour when loading image
-# - Preview view that always draws small image
-# - Preview moves away depending on draw position
+# v Preview view always draws small image
+# v Preview in two different sizes
+# - Flip preview image
 # - Brush size
 # - New undo-system. Hold a number of stroke undos, not per-pixel history.
+# v Find nearest colour when loading image
 # v Images saved in subfolder
 # v Move load/save icons to start of icon-row
 # v Selecting colour twice sets BG colour
@@ -29,17 +30,16 @@
 # - Clash test tool button
 # v Draw checkered/simple dither
 # - Add CRT-effect to preview
+# - Replace the canvas image with a small, but scaled bitmap
+# - The above should make it possible to pan image, investigate!
 # v Full-screen with no Pythonista title bar
 # v Switch between gradient and 0-F order of colours
 #
 #
 # Fixes/Bugs Todo:
 #
-# v Delete prevPixel after completing a stroke
 # - Error on exit if there is no image. has_image function fails
 # - Code changes have resulted in multiple duplicate functions, go through and clean up
-# v Move more settings/variables to the outermost scope
-# v General functions for converting 0-255 rgb to 0..1 rgb
 # - Zoom function sometimes ends by drawing a pixel, should not do that
 
 import console
@@ -52,7 +52,8 @@ import Image
 
 from io import BytesIO
 from os.path import isfile
-from time import clock, sleep
+from time import time, sleep
+from datetime import datetime
 #from ImageOps import invert
 
 
@@ -60,12 +61,12 @@ from time import clock, sleep
 class Settings (object):
     undoSteps = 10
     autoSaveTime = 30 # Number of seconds between autosaves
+    previewTime = 2 # Seconds to wait between preview 
     width = 320
     height = 200
-    pixelSize = 2 # Made to be only 1 or 2
+    pixelSize = 2 # 1: C64 singlecolor mode, 2: C64 multicolor mode
     actualWidth = width / pixelSize
     charSize = 8
-    maxCharCol = 3 # Max colors per character, EXCLUDING bg color
     c64color_palette = [ (0, 0, 0), (255, 255, 255), (158, 59, 80), (133, 233, 209), (163, 70, 182), (93, 195, 94), (61, 51, 191), (249, 255, 126), (163, 98, 33), (103, 68, 0), (221, 121, 138), (86, 89, 86), (138, 140, 137), (182, 253, 184), (140, 128, 255), (195, 195, 193) ]
     c64color_labels = [ "black", "white", "red", "cyan", "purple", "green", "blue", "yellow", "orange", "brown", "pink", "darkgrey", "grey", "lightgreen", "lightblue", "lightgrey"]
 
@@ -182,6 +183,7 @@ class UndoStack (object):
 class PixelEditor(ui.View):
     # 1: 1x1 pixel, 2: 1x2 pixels, 3: 2x4 pixels, 4: character (4x8 pixels)
     brushSize = 1
+    previewMode = 1 # 0: off, 1:normal size, 2: double size
     toolMode = 'dots'
     prevMode = 'dots'
     drawDithered = False
@@ -195,19 +197,20 @@ class PixelEditor(ui.View):
     zoomCurrent = 1 # What level we're currently zooming to
     zoomState = False
 
-    # Last autosave time
+    # Last autosave and undo time
     lastSave = 0
+    lastUndo = 0
 
     def did_load(self):
         self.row = Settings.width/Settings.pixelSize
         self.column = Settings.height
-        self.lastSave = int(clock())
+        self.lastSave = int(time())
         self.pixels = []
         self.image_view = self.create_image_view()
         self.grid_layout = self.create_grid_layout()
         self.image_view.image = self.create_new_image() # Needs to be set twice for some reason..
         self.zoom_frame = self.create_zoom_frame()
-        self.zoom_frame.alpha = self.gridOpacity
+        self.grid_layout.alpha = self.gridOpacity
         self.current_color = (1, 1, 1, 1)
         ## Todo: Loading auto-save should probably be here.
         ## But it does not work, probably because the preview 
@@ -282,20 +285,11 @@ class PixelEditor(ui.View):
     def get_current_region(self):
         return (self.get_zoom_region()) if (self.zoomState == True) else ( (0, 0) , ((Settings.width/Settings.pixelSize)-1, Settings.height-1) )
     
-    # Sets image in both views
     def set_image(self, image=None):
         # Image is set to provided image or a new is created
         image = image or self.create_new_image()
-        #if self.zoomState == False:
-        #    self.superview['preview'].image = self.image_view.image = image
-        #if self.zoomState == True:
-        if True:
-            self.image_view.image = image
-            try:
-                self.draw_preview()
-            except Exception:
-                pass
-
+        self.image_view.image = image
+        
     def get_image(self):
         image = self.image_view.image
         return image
@@ -320,7 +314,7 @@ class PixelEditor(ui.View):
                     pixel.position = (x,y)
                     path.append_path(ui.Path.rect(*pixel.rect))
                     self.pixels.append(pixel) #Adds this pixel to the pixels list
-            ui.set_color((0.5,0.5,0.5,0.25))
+            ui.set_color((0.5,0.5,0.5,0.5))
             path.stroke()
             # Grid line per character
             for y in xrange(self.column/8):
@@ -328,7 +322,7 @@ class PixelEditor(ui.View):
                     #pixel = Pixel(x*s*8, y*s*8, s*8, s*8)
                     #charpath.append_path(ui.Path.rect(*pixel.rect))
                     charpath.append_path(ui.Path.rect(x*s*8, y*s*8, s*8, s*8))
-            ui.set_color((1,1,1,0.25))
+            ui.set_color((1,1,1,0.5))
             charpath.stroke()
             return ctx.get_image()
     
@@ -388,7 +382,7 @@ class PixelEditor(ui.View):
             for y in xrange(startPos[1], endPos[1]+1):
                 for x in xrange(startPos[0], endPos[0]+1):
                     pixelGrid.append_path(ui.Path.rect((x-startPos[0])*pixelScale*2, (y-startPos[1])*pixelScale, pixelScale*2, pixelScale))
-            drawColor = (1.0,1.0,1.0,0.25) if self.darkGrid == False else (0.0,0.0,0.0,0.25)
+            drawColor = (0.5,0.5,0.5,0.5) if self.darkGrid == False else (0.0,0.0,0.0,0.5)
             ui.set_color(drawColor)
             pixelGrid.stroke()
             # Grid line per character
@@ -429,10 +423,15 @@ class PixelEditor(ui.View):
             path.fill()
             self.superview['preview'].image = ctx.get_image()
         return True
-        
-    def preview_reposition(self):
+    
+    @ui.in_background
+    def preview_putimg(self, ui_img):
+        pil_img = ui_to_pil(ui_img)
+        pil_img = pil_img.resize((Settings.width, Settings.height), Image.NEAREST)
+        self.superview['preview'].image = pil_to_ui(pil_img)
         return True
-        
+
+    @ui.in_background            
     def preview_drawPixels(self):
         zoomPixels = self.position_pixels()
         old_img = self.superview['preview'].image
@@ -446,15 +445,21 @@ class PixelEditor(ui.View):
                 pixel_path.fill()
                 pixel_path.stroke()
             self.superview['preview'].image = ctx.get_image()
+            
+    def preview_update(self):
+        if self.zoomState == False:
+            self.preview_putimg(self.image_view.image)
+        else:
+            self.preview_drawPixels()
         
     def reset(self, row=None, column=None):
         self.pixels = []
         self.grid_layout.image = self.init_pixel_grid()
         self.set_image()
     
-    def tempsave(self, prefix=""):
+    def fastsave(self, file_name=""):
         if self.has_image():
-            file_name = "images/" + prefix + "_tempsave.png"
+            file_name = "images/" + file_name + ".png"
             print('Saving temp image ' + file_name)
             pixels_to_png(self.background_color, self.pixels, Settings.width, Settings.height, file_name)
             print('Saved!')
@@ -464,6 +469,7 @@ class PixelEditor(ui.View):
 
     @ui.in_background
     def loadimage(self, file_name, colorcheck=True):
+        # if a temp version exists, load that instead
         loadImg = file_to_img(Settings.height, Settings.width, file_name)
         img = self.create_new_image()
         charRowSize = Settings.actualWidth * Settings.charSize
@@ -487,6 +493,7 @@ class PixelEditor(ui.View):
                 self.pixels[i].color = color_to_1(pixelCol)
             img = self.draw_index_array(img, indexArray)
             self.set_image(img)
+        self.preview_putimg(img)
         #indicator.stop()
         #self.remove_subview(indicator)
         return True
@@ -601,26 +608,27 @@ class PixelEditor(ui.View):
         p = scene.Point(*touch.location)
         for pixel in self.pixels:
             if p in pixel.rect:
-            # Auto-save image every 20 seconds of painting
-                saveDelta = int(clock()) - self.lastSave
+                # Auto-save image
+                saveDelta = int(time()) - self.lastSave
                 if saveDelta > Settings.autoSaveTime:
                     self.superview['debugtext'].text = "Autosaving..."
-                    self.tempsave(self.imageName)
-                    self.lastSave = int(clock())
+                    currentTime = str(datetime.now().day) + "_" + str(datetime.now().hour)
+                    self.fastsave(self.imageName + "_worksave_" + currentTime)
+                    self.lastSave = int(time())
                 if self.toolMode == 'dots':
                     self.drawpixel(pixel)
                     if self.toolMode == 'lines' or self.toolMode == 'dots':
-                        self.superview['debugtext'].text = "index:" + str(pixel.index) + ", pos:" + str(pixel.position) + ", touch:" + touchState + ", autosave:" + str(Settings.autoSaveTime-saveDelta)
+                        self.superview['debugtext'].text = "index:" + str(pixel.index) + ", pos:" + str(pixel.position) + ", autosave:" + str(Settings.autoSaveTime-saveDelta)
                 elif self.toolMode == 'lines':
                     if touchState == 'began':
                         self.prevPixel == []
                     self.drawline(self.prevPixel, pixel, touchState)
                     self.prevPixel = pixel
                     if touchState == "ended":
-                        ## Todo: update preview image at end of each stroke
+                        #self.preview_update()
                         self.prevPixel = []
                     if self.toolMode == 'lines' or self.toolMode == 'dots':
-                        self.superview['debugtext'].text = "index:" + str(pixel.index) + ", pos:" + str(pixel.position) + ", touch:" + touchState + ", autosave:" + str(Settings.autoSaveTime-saveDelta)
+                        self.superview['debugtext'].text = "index:" + str(pixel.index) + ", pos:" + str(pixel.position) + ", autosave:" + str(Settings.autoSaveTime-saveDelta)
                 elif self.toolMode == 'zoom':
                     self.set_zoom_center(touch.location)
 
@@ -646,7 +654,12 @@ class PixelEditor(ui.View):
                         self.superview['debugtext'].text = "Mode set back to " + self.toolMode
                         ## Todo: Sometimes, random dots get drawn after this command
                         ## Investigate why
-
+                # Update preview image
+                undoDelta = int(time()) - self.lastUndo
+                if undoDelta > Settings.previewTime:
+                    self.preview_update()
+                    self.lastUndo = int(time())
+                
 
     def touch_began(self, touch):
         self.action(touch, "began")
@@ -790,7 +803,8 @@ class ToolbarView (ui.View):
     def zoom (self, sender):
         if self.superview['editor'].zoomState == False:
             self.superview['editor'].zoom_frame.hidden = False
-            self.superview['editor'].prevMode = self.superview['editor'].toolMode
+            if self.superview['editor'].toolMode != 'zoom':
+                self.superview['editor'].prevMode = self.superview['editor'].toolMode
             # The zoom tool action will now be used
             self.superview['editor'].toolMode = 'zoom'
             self.superview['debugtext'].text = "Entering zoom mode"
@@ -798,11 +812,11 @@ class ToolbarView (ui.View):
         elif self.superview['editor'].zoomState == True:
             self.superview['editor'].zoom_frame.hidden = True
             self.superview['editor'].toolMode = self.superview['editor'].prevMode
-
-            # Todo: insert redraw views
             self.superview['editor'].zoomState = False
             self.superview['editor'].redraw_canvas()
+            self.superview['editor'].preview_update()
             self.superview['debugtext'].text = "Leaving zoom mode"
+            
 
     def changezoom (self, sender):
         prevCenter = self.superview['editor'].get_zoom_center()
@@ -817,14 +831,6 @@ class ToolbarView (ui.View):
         # Redraw canvas if we are zoomed in
         if self.superview['editor'].zoomState == True:
             self.superview['editor'].redraw_canvas()
-
-    def trash(self, sender):
-        if self.pixel_editor.has_image():
-            trashMsg = 'Are you sure you want to clear the editor? Image will not be saved.'
-            if console.alert('Trash', trashMsg, 'Yes'):
-                self.pixel_editor.reset()
-        else:
-            self.show_error()
 
     @ui.in_background
     def load(self, sender):
@@ -853,7 +859,7 @@ class ToolbarView (ui.View):
             elif option == 2:
                 # Saves image to disk
                 name = 'images/image_{}.png'
-                get_num = lambda x=1: get_num(x+1) if path.isfile(name.format(x)) else x
+                get_num = lambda x=1: get_num(x+1) if isfile(name.format(x)) else x
                 file_name = name.format(get_num())
                 pixels_to_png(self.superview['editor'].background_color, self.pixel_editor.pixels, self.pixel_editor.row*2, self.pixel_editor.column, file_name)
                 console.hud_alert('Image saved as "{}"'.format(file_name))
@@ -863,26 +869,33 @@ class ToolbarView (ui.View):
         else:
             self.show_error()
 
-    def exit(self, sender):
-        try:
-            self.superview['editor'].tempsave(self.superview['editor'].imageName)
-        except Exception,e: 
-            print str(e)
-        msg = 'Are you sure you want to quit the pixel editor?'
-        if console.alert('Quit', msg, 'Yes'):
-            self.superview.close()
-        else:
-            self.show_error()
-        return True
-
     def undo(self, sender):
         ## Todo: undo function!
         ##
         print "Undo!"
         #self.pixel_editor.undo()
 
-    @ui.in_background
+    #@ui.in_background
     def preview(self, sender):
+        previewMode = self.superview['editor'].previewMode
+        if previewMode == 2:
+            self.superview['preview'].hidden = True
+            self.superview['editor'].previewMode = 0
+        elif previewMode == 0:
+            self.superview['preview'].hidden = False
+            self.superview['preview'].width = Settings.width
+            self.superview['preview'].height = Settings.height
+            self.superview['preview'].y = 560
+            self.superview['editor'].previewMode = 1
+        elif previewMode == 1:
+            self.superview['preview'].hidden = False
+            self.superview['preview'].width = Settings.width * 2
+            self.superview['preview'].height = Settings.height * 2
+            self.superview['preview'].y = 560 - Settings.height
+            self.superview['editor'].previewMode = 2
+        
+    # Not used at the moment
+    def preview_big_window(self, sender):
         if self.pixel_editor.has_image():
             v = ui.ImageView(frame=(100,100,320,200))
      
@@ -895,7 +908,28 @@ class ToolbarView (ui.View):
             v.present('popover', popover_location=(100, 100), hide_title_bar=True)
         else:
             self.show_error()
+    
+    def trash(self, sender):
+        if self.pixel_editor.has_image():
+            trashMsg = 'Are you sure you want to clear the editor? Image will not be saved.'
+            if console.alert('Trash', trashMsg, 'Yes'):
+                self.pixel_editor.reset()
+        else:
+            self.show_error()
 
+    def exit(self, sender):
+        try:
+            self.superview['editor'].fastsave(self.superview['editor'].imageName + "_tempsave")
+        except Exception,e: 
+            print str(e)
+        msg = 'Are you sure you want to quit the pixel editor?'
+        if console.alert('Quit', msg, 'Yes'):
+            self.superview.close()
+        else:
+            self.show_error()
+        return True
+
+    
 
 v = ui.load_view('c64_painter')
 toolbar = v['toolbar']
@@ -904,6 +938,6 @@ for subview in toolbar.subviews:
     toolbar.init_actions(subview)
 v.present(style = 'full_screen', orientations=['landscape'], hide_title_bar=True)
 # If a temporary save exist, we load it into the editor
-#if isfile("images/_tempsave.png"):
-#    v['editor'].loadimage("images/_tempsave.png", False)
+if isfile("images/_tempsave.png"):
+   v['editor'].loadimage("images/_tempsave.png", False)
 v['editor'].preview_init()
