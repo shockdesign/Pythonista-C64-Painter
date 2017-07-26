@@ -36,8 +36,9 @@
 # Fixes/Bugs Todo:
 #
 # v Delete prevPixel after completing a stroke
+# - Error on exit if there is no image. has_image function fails
 # - Code changes have resulted in multiple duplicate functions, go through and clean up
-# v Move more settings variables to the outermost scope
+# v Move more settings/variables to the outermost scope
 # v General functions for converting 0-255 rgb to 0..1 rgb
 # - Zoom function sometimes ends by drawing a pixel, should not do that
 
@@ -52,13 +53,13 @@ import Image
 from io import BytesIO
 from os.path import isfile
 from time import clock, sleep
+#from ImageOps import invert
 
 
 # Settings used across the editor
 class Settings (object):
     undoSteps = 10
     autoSaveTime = 30 # Number of seconds between autosaves
-    imageName = ""
     width = 320
     height = 200
     pixelSize = 2 # Made to be only 1 or 2
@@ -176,7 +177,7 @@ class UndoStack (object):
     def clearStack():
         undoData = []
         return True
-                
+
 
 class PixelEditor(ui.View):
     # 1: 1x1 pixel, 2: 1x2 pixels, 3: 2x4 pixels, 4: character (4x8 pixels)
@@ -184,7 +185,10 @@ class PixelEditor(ui.View):
     toolMode = 'dots'
     prevMode = 'dots'
     drawDithered = False
+    gridOpacity = 0.5
+    darkGrid = False
     prevPixel = []
+    imageName = ""
 
     # The various zoom levels
     zoomLevels = (2, 3, 6, 9)
@@ -201,8 +205,9 @@ class PixelEditor(ui.View):
         self.pixels = []
         self.image_view = self.create_image_view()
         self.grid_layout = self.create_grid_layout()
+        self.image_view.image = self.create_new_image() # Needs to be set twice for some reason..
         self.zoom_frame = self.create_zoom_frame()
-        self.grid_opacity = 1.0
+        self.zoom_frame.alpha = self.gridOpacity
         self.current_color = (1, 1, 1, 1)
         ## Todo: Loading auto-save should probably be here.
         ## But it does not work, probably because the preview 
@@ -281,14 +286,15 @@ class PixelEditor(ui.View):
     def set_image(self, image=None):
         # Image is set to provided image or a new is created
         image = image or self.create_new_image()
-        if self.zoomState == False:
-            # Sets both main image and the smaller preview image
+        #if self.zoomState == False:
+        #    self.superview['preview'].image = self.image_view.image = image
+        #if self.zoomState == True:
+        if True:
             self.image_view.image = image
-            self.superview['preview'].image = image # Why does this only work after a while
-        if self.zoomState == True:
-            ## Todo: Change this to draw separate image for preview
-            ## Or, draw small zoomed image and comp over?
-            self.image_view.image = image
+            try:
+                self.draw_preview()
+            except Exception:
+                pass
 
     def get_image(self):
         image = self.image_view.image
@@ -325,6 +331,13 @@ class PixelEditor(ui.View):
             ui.set_color((1,1,1,0.25))
             charpath.stroke()
             return ctx.get_image()
+    
+    def create_new_image(self):
+        path = ui.Path.rect(*self.bounds)
+        with ui.ImageContext(self.width, self.height) as ctx:
+            ui.set_color((0, 0, 0, 1))
+            path.fill()
+            return ctx.get_image()
 
     def create_grid_layout(self):
         image_view = ui.ImageView(frame=self.bounds)
@@ -337,13 +350,6 @@ class PixelEditor(ui.View):
         image_view.image = self.create_new_image()
         self.add_subview(image_view)
         return image_view
-
-    def create_new_image(self):
-        path = ui.Path.rect(*self.frame)
-        with ui.ImageContext(self.width, self.height) as ctx:
-            ui.set_color((0, 0, 0, 0))
-            path.fill()
-            return ctx.get_image()
 
     def position_pixels(self):
         # Upper right and lower left corner of pixels in the view
@@ -382,17 +388,19 @@ class PixelEditor(ui.View):
             for y in xrange(startPos[1], endPos[1]+1):
                 for x in xrange(startPos[0], endPos[0]+1):
                     pixelGrid.append_path(ui.Path.rect((x-startPos[0])*pixelScale*2, (y-startPos[1])*pixelScale, pixelScale*2, pixelScale))
-            ui.set_color((0.5,0.5,0.5,0.5))
+            drawColor = (1.0,1.0,1.0,0.25) if self.darkGrid == False else (0.0,0.0,0.0,0.25)
+            ui.set_color(drawColor)
             pixelGrid.stroke()
             # Grid line per character
             for y in xrange(int(startPos[1]/charSize)*charSize, endPos[1]+1, charSize):
                 for x in xrange(int(startPos[0]/charSize*charSize), endPos[0]+1,4):
                     characterGrid.append_path(ui.Path.rect((x-startPos[0])*pixelScale*2, (y-startPos[1])*pixelScale, pixelScale*charSize, pixelScale*charSize))
-            ui.set_color((1,1,1,0.5))
+            drawColor = (1,1,1,0.5) if self.darkGrid == False else (0,0,0,0.5)
+            ui.set_color(drawColor)
             characterGrid.stroke()
             return ctx.get_image()    
-        
-    # Redraws the canvas
+                
+    # Redraws the main editor window
     def redraw_canvas(self):
         # Gets the pixels covered by the current zoom level
         zoomPixels = self.position_pixels()
@@ -401,7 +409,6 @@ class PixelEditor(ui.View):
         with ui.ImageContext(self.width, self.height) as ctx:
             for i in zoomPixels:
                 p = self.pixels[i]
-                #path = ui.Path.rect(*curPixel.rect)
                 ui.set_color(p.color)
                 pixel_path = ui.Path.rect(p.rect[0],p.rect[1],p.rect[2],p.rect[3])
                 pixel_path.line_width = 0.5
@@ -411,30 +418,61 @@ class PixelEditor(ui.View):
             ## Todo: insert drawing of preview window:
         # Redraw grid
         self.grid_layout.image = self.draw_grid_image()
-        #self.grid_layout.hidden = True # Hide grid temporarily
+        self.grid_layout.alpha = self.gridOpacity
         return True
-
+    
+    #@ui.in_background
+    def preview_init(self):
+        path = ui.Path.rect(0, 0, Settings.width, Settings.height)
+        with ui.ImageContext(Settings.width, Settings.height) as ctx:
+            ui.set_color((0, 0, 0, 1))
+            path.fill()
+            self.superview['preview'].image = ctx.get_image()
+        return True
+        
+    def preview_reposition(self):
+        return True
+        
+    def preview_drawPixels(self):
+        zoomPixels = self.position_pixels()
+        old_img = self.superview['preview'].image
+        with ui.ImageContext(Settings.width, Settings.height) as ctx:
+            old_img.draw()
+            for i in zoomPixels:
+                p = self.pixels[i]
+                ui.set_color(p.color)
+                pixel_path = ui.Path.rect(p.position[0]*Settings.pixelSize,p.position[1],1*Settings.pixelSize,1)
+                pixel_path.line_width = 0.5
+                pixel_path.fill()
+                pixel_path.stroke()
+            self.superview['preview'].image = ctx.get_image()
+        
     def reset(self, row=None, column=None):
         self.pixels = []
-        #self.pixel_path = []
         self.grid_layout.image = self.init_pixel_grid()
         self.set_image()
     
     def tempsave(self, prefix=""):
-        if self.pixel_editor.has_image():
+        if self.has_image():
             file_name = "images/" + prefix + "_tempsave.png"
             print('Saving temp image ' + file_name)
             pixels_to_png(self.background_color, self.pixels, Settings.width, Settings.height, file_name)
             print('Saved!')
             return True
-        else:
-            self.show_error()
+        #else:
+        #    print("Attempted autosave with no image data.")
 
-    def loadimage(self, file_name):
+    @ui.in_background
+    def loadimage(self, file_name, colorcheck=True):
         loadImg = file_to_img(Settings.height, Settings.width, file_name)
         img = self.create_new_image()
         charRowSize = Settings.actualWidth * Settings.charSize
         # We read and draw the image one character line at a time
+        #indicator = ui.ActivityIndicator()
+        #indicator.center = self.center
+        #self.add_subview(indicator)
+        #indicator.bring_to_front()
+        #indicator.start()
         for charRow in xrange(0, Settings.height/Settings.charSize):
             indexArray = []
             startIndex = charRow*charRowSize
@@ -444,10 +482,13 @@ class PixelEditor(ui.View):
                 indexArray.append(i)
                 pixelCol = loadImg.getpixel(self.pixels[i].position)
                 # Find the closest color in the C64 palette
-                pixelCol = closest_in_palette(pixelCol)
+                if colorcheck == True:
+                    pixelCol = closest_in_palette(pixelCol)
                 self.pixels[i].color = color_to_1(pixelCol)
             img = self.draw_index_array(img, indexArray)
             self.set_image(img)
+        #indicator.stop()
+        #self.remove_subview(indicator)
         return True
         
     def pencil(self, pixel):
@@ -564,7 +605,7 @@ class PixelEditor(ui.View):
                 saveDelta = int(clock()) - self.lastSave
                 if saveDelta > Settings.autoSaveTime:
                     self.superview['debugtext'].text = "Autosaving..."
-                    self.tempsave(Settings.imageName)
+                    self.tempsave(self.imageName)
                     self.lastSave = int(clock())
                 if self.toolMode == 'dots':
                     self.drawpixel(pixel)
@@ -603,11 +644,8 @@ class PixelEditor(ui.View):
                         # Return to previous tool mode
                         self.toolMode = self.prevMode
                         self.superview['debugtext'].text = "Mode set back to " + self.toolMode
-                        # Sometime, random dots get drawn after this command
-
-                # Debug text
-                #if self.toolMode == 'lines' or self.toolMode == 'dots':
-                #  self.superview['debugtext'].text = "index:" + str(pixel.index) + ", pos:" + str(pixel.position) + ", touch:" + touchState + ", saveDelta:" + str(saveDelta)
+                        ## Todo: Sometimes, random dots get drawn after this command
+                        ## Investigate why
 
 
     def touch_began(self, touch):
@@ -741,10 +779,12 @@ class ToolbarView (ui.View):
             self.subviews[0].subviews[11].tint_color = 'black'
 
     def grid (self, sender):
-        self.superview['editor'].grid_layout.alpha = self.superview['editor'].grid_layout.alpha - 0.5
-        if self.superview['editor'].grid_layout.alpha < 0:
-            self.superview['editor'].grid_layout.alpha = 1.0
-        #self.superview['editor'].grid_layout.hidden = not self.superview['editor'].grid_layout.hidden
+        self.superview['editor'].gridOpacity = self.superview['editor'].grid_layout.alpha = self.superview['editor'].grid_layout.alpha - 0.5
+        if self.superview['editor'].gridOpacity < 0:
+            self.superview['editor'].darkGrid = not self.superview['editor'].darkGrid
+            print ("Darkgrid: " + str(self.superview['editor'].darkGrid))
+            self.superview['editor'].grid_layout.image = self.superview['editor'].draw_grid_image()
+            self.superview['editor'].gridOpacity = self.superview['editor'].grid_layout.alpha = 1.0
         return True
 
     def zoom (self, sender):
@@ -788,8 +828,10 @@ class ToolbarView (ui.View):
 
     @ui.in_background
     def load(self, sender):
-        file_name = "images/" + console.input_alert('Load Image')
+        input_file = console.input_alert('Load Image')
+        file_name = "images/" + input_file
         if isfile(file_name):
+            self.superview['editor'].imageName = input_file[:-4]
             if self.superview['editor'].zoomState == True:
                 self.zoom(sender)
             print ("Loading '" + file_name + "' into editor.")
@@ -823,7 +865,7 @@ class ToolbarView (ui.View):
 
     def exit(self, sender):
         try:
-            self.superview['editor'].tempsave()
+            self.superview['editor'].tempsave(self.superview['editor'].imageName)
         except Exception,e: 
             print str(e)
         msg = 'Are you sure you want to quit the pixel editor?'
@@ -843,7 +885,7 @@ class ToolbarView (ui.View):
     def preview(self, sender):
         if self.pixel_editor.has_image():
             v = ui.ImageView(frame=(100,100,320,200))
-    
+     
             # CRT Emulation
             im = self.pixel_editor.get_image()
             # insert CRT emulation here
@@ -862,5 +904,6 @@ for subview in toolbar.subviews:
     toolbar.init_actions(subview)
 v.present(style = 'full_screen', orientations=['landscape'], hide_title_bar=True)
 # If a temporary save exist, we load it into the editor
-if isfile("images/_tempsave.png"):
-    v['editor'].loadimage("images/_tempsave.png")
+#if isfile("images/_tempsave.png"):
+#    v['editor'].loadimage("images/_tempsave.png", False)
+v['editor'].preview_init()
