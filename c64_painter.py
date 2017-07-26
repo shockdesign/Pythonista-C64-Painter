@@ -14,13 +14,13 @@
 # v Autosave on user defined seconds and at exit
 # v Load last autosave when opening editor
 # v Set grid opacity
-# - Enter name when saving image
-# - New icons
+# v Enter name when saving image
+# v New icons
 # - Brush type has a switch type button
+# - Brush sizes
 # v Preview view always draws small image
 # v Preview in two different sizes
 # - Flip preview image
-# - Brush size
 # - New undo-system. Hold a number of stroke undos, not per-pixel history.
 # v Find nearest colour when loading image
 # v Images saved in subfolder
@@ -751,7 +751,31 @@ class ColorView (ui.View):
 class ToolbarView (ui.View):
     # Customize view after loading UI file
     def did_load(self):
-        self.subviews[0].subviews[0].background_image = ui.Image.named('icons/paint_dots_64.png')
+        ## Todo: This seems like a very inelegant solution for changing button images
+        self.subviews[0].subviews[0].title = ""
+        self.subviews[0].subviews[0].background_image = ui.Image.named('icons/tool_dots_64.png')
+        self.subviews[0].subviews[1].title = ""
+        self.subviews[0].subviews[1].background_image = ui.Image.named('icons/tool_undo_64.png')
+        self.subviews[0].subviews[2].title = ""
+        self.subviews[0].subviews[2].background_image = ui.Image.named('icons/tool_clear_64.png')
+        self.subviews[0].subviews[3].title = ""
+        self.subviews[0].subviews[3].background_image = ui.Image.named('icons/tool_save_64.png')
+        self.subviews[0].subviews[4].title = ""
+        self.subviews[0].subviews[4].background_image = ui.Image.named('icons/tool_preview_64.png')
+        self.subviews[0].subviews[5].title = ""
+        self.subviews[0].subviews[5].background_image = ui.Image.named('icons/tool_zoom_64.png')
+        self.subviews[0].subviews[6].title = ""
+        self.subviews[0].subviews[6].background_image = ui.Image.named('icons/tool_load_64.png')
+        self.subviews[0].subviews[7].title = ""
+        self.subviews[0].subviews[7].background_image = ui.Image.named('icons/tool_grid_64.png')
+        self.subviews[0].subviews[8].title = ""
+        self.subviews[0].subviews[8].background_image = ui.Image.named('icons/tool_lines_64.png')
+        self.subviews[0].subviews[9].title = ""
+        self.subviews[0].subviews[9].background_image = ui.Image.named('icons/tool_exit_64.png')
+        self.subviews[0].subviews[10].title = ""
+        self.subviews[0].subviews[10].background_image = ui.Image.named('icons/tool_zoomlevel_64.png')
+        self.subviews[0].subviews[11].title = ""
+        self.subviews[0].subviews[11].background_image = ui.Image.named('icons/tool_dither_64.png')
         self.subviews[0].subviews[0].image = None
         #pass
         #self.pixel_editor = self.superview['editor']
