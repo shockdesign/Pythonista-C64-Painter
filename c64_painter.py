@@ -820,7 +820,7 @@ class ToolbarView (ui.View):
 
     def changezoom (self, sender):
         prevCenter = self.superview['editor'].get_zoom_center()
-        if self.superview['editor'].zoomCurrent == len(self.superview['editor'].zoomLevels)-1:
+        if self.pixel_editor.zoomCurrent == len(self.superview['editor'].zoomLevels)-1:
             self.superview['editor'].zoomCurrent = 0
         else:
             self.superview['editor'].zoomCurrent += 1
@@ -858,11 +858,17 @@ class ToolbarView (ui.View):
                 console.hud_alert('Saved to cameraroll')
             elif option == 2:
                 # Saves image to disk
-                name = 'images/image_{}.png'
-                get_num = lambda x=1: get_num(x+1) if isfile(name.format(x)) else x
-                file_name = name.format(get_num())
-                pixels_to_png(self.superview['editor'].background_color, self.pixel_editor.pixels, self.pixel_editor.row*2, self.pixel_editor.column, file_name)
-                console.hud_alert('Image saved as "{}"'.format(file_name))
+                imageName = console.input_alert('Save Image')
+                fileName = ('images/' + imageName + '.png')
+                if isfile(fileName):
+                    console.hud_alert('File exist!','error')
+                    return False
+                self.pixel_editor.imageName = imageName
+                #name = 'images/image_{}.png'
+                #get_num = lambda x=1: get_num(x+1) if isfile(name.format(x)) else x
+                #file_name = name.format(get_num())
+                pixels_to_png(self.superview['editor'].background_color, self.pixel_editor.pixels, self.pixel_editor.row*2, self.pixel_editor.column, fileName)
+                console.hud_alert('Image saved as "{}"'.format(fileName))
             elif option == 3:
                 clipboard.set_image(image, format='png')
                 console.hud_alert('Copied')
