@@ -10,30 +10,17 @@
 #
 #
 # Features Todo:
-# v Zoom mode
-# v Autosave on user defined seconds and at exit
-# v Load last autosave when opening editor
-# v Set grid opacity
-# v Enter name when saving image
-# v New icons
-# - Brush type has a switch type button
-# - Brush sizes
-# v Preview view always draws small image
-# v Preview in two different sizes
-# - Flip preview image
-# - New undo-system. Hold a number of stroke undos, not per-pixel history.
-# v Find nearest colour when loading image
-# v Images saved in subfolder
-# v Move load/save icons to start of icon-row
-# v Selecting colour twice sets BG colour
-# - Make colour set to BG draw as transparent?
 # - Clash test tool button
-# v Draw checkered/simple dither
+# - Brush sizes
+# - Koala Paint export
+# - Only draw on bg color mode (like Manga Paint background mode)
+# - Flip image vertically and horizontally
+# - Pan image with arrow keys
+# - Pan tool
+# - Palm reject
+# - New undo-system; Hold a number of stroke undos, not per-pixel history.
+# - Make colour set to BG draw as transparent?
 # - Add CRT-effect to preview
-# - Replace the canvas image with a small, but scaled bitmap
-# - The above should make it possible to pan image, investigate!
-# v Full-screen with no Pythonista title bar
-# v Switch between gradient and 0-F order of colours
 #
 #
 # Fixes/Bugs Todo:
@@ -67,7 +54,8 @@ class Settings (object):
     pixelSize = 2 # 1: C64 singlecolor mode, 2: C64 multicolor mode
     actualWidth = width / pixelSize
     charSize = 8
-    c64color_palette = [ (0, 0, 0), (255, 255, 255), (158, 59, 80), (133, 233, 209), (163, 70, 182), (93, 195, 94), (61, 51, 191), (249, 255, 126), (163, 98, 33), (103, 68, 0), (221, 121, 138), (86, 89, 86), (138, 140, 137), (182, 253, 184), (140, 128, 255), (195, 195, 193) ]
+    c64color_palette = [ (0, 0, 0), (252, 252, 252), (141, 58, 76), (131, 192, 176), (147, 73, 161), (97, 167, 95), (63, 56, 172), (207, 215, 109), (146, 91, 38), (99, 65, 8), (190, 110, 129), (85, 85, 85), (130, 130, 130), (165, 228, 152), (128, 118, 229), (169, 169, 169) ] # Grabbed from Youtube video of a real C64
+    #c64color_palette = [ (0, 0, 0), (255, 255, 255), (158, 59, 80), (133, 233, 209), (163, 70, 182), (93, 195, 94), (61, 51, 191), (249, 255, 126), (163, 98, 33), (103, 68, 0), (221, 121, 138), (86, 89, 86), (138, 140, 137), (182, 253, 184), (140, 128, 255), (195, 195, 193) ] # My original DV capture palette
     c64color_labels = [ "black", "white", "red", "cyan", "purple", "green", "blue", "yellow", "orange", "brown", "pink", "darkgrey", "grey", "lightgreen", "lightblue", "lightgrey"]
 
 
@@ -382,7 +370,7 @@ class PixelEditor(ui.View):
             for y in xrange(startPos[1], endPos[1]+1):
                 for x in xrange(startPos[0], endPos[0]+1):
                     pixelGrid.append_path(ui.Path.rect((x-startPos[0])*pixelScale*2, (y-startPos[1])*pixelScale, pixelScale*2, pixelScale))
-            drawColor = (0.5,0.5,0.5,0.5) if self.darkGrid == False else (0.0,0.0,0.0,0.5)
+            drawColor = (0.5,0.5,0.5,0.5) if self.darkGrid == False else (0.25,0.25,0.25,0.5)
             ui.set_color(drawColor)
             pixelGrid.stroke()
             # Grid line per character
@@ -878,7 +866,7 @@ class ToolbarView (ui.View):
             image = self.pixel_editor.get_image()
             option = console.alert('Save Image', '', 'Camera Roll', 'New File', 'Copy image')
             if option == 1:
-                photos.save_image(image)
+                photos.save_image(self.superview['preview'].image)
                 console.hud_alert('Saved to cameraroll')
             elif option == 2:
                 # Saves image to disk
