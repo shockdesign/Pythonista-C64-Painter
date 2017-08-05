@@ -1,6 +1,5 @@
 #!python2
 
-
 # Pythonista C64 Painter AKA Redux Paint
 #
 # Personal project for learning Python
@@ -193,7 +192,7 @@ class PixelEditor(ui.View):
 
     # Last autosave and undo time
     lastSave = 0
-    lastUndo = 0
+    lastUndo = 0 #! Todo, add undo
 
     def did_load(self):
         self.row = Settings.width/Settings.pixelSize
