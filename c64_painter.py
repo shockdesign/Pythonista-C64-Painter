@@ -514,7 +514,7 @@ class PixelEditor(ui.View):
 
     #@ui.in_background
     def loadimage(self, file_name, colorcheck=True):
-        self.color_check.hidden = True:
+        self.color_check.hidden = True
         loadImg = file_to_img(Settings.height, Settings.width, file_name)
         img = self.create_new_image()
         charRowSize = Settings.actualWidth * Settings.charSize
@@ -898,6 +898,8 @@ class ToolbarView (ui.View):
             self.superview['editor'].zoomState = False
             self.superview['editor'].redraw_canvas()
             self.superview['editor'].preview_update()
+            if self.superview['editor'].color_check.hidden == False:
+                self.superview['editor'].character_colorcheck()
             self.superview['debugtext'].text = "Leaving zoom mode"
             
 
