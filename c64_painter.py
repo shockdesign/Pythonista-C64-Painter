@@ -3,14 +3,15 @@
 # Pythonista C64 Painter AKA Redux Paint
 #
 # Personal project for learning Python
-# Warning, here be monstrous code and vicious rabbits.
+# Bring holy handgrenades, here be monstrous code and vicious rabbits!
 #
+# Scripted by Rune Spaans
 # Based on the Pythonista Pixel Editor by Sebastian Jarsve
-# Modified by Rune Spaans
 #
 #
 # Features Todo:
-# - Clash test tool button
+# - Icons change state when pressed
+# - Clash test tool icon
 # - Brush sizes
 # - Koala Paint export
 # - Only draw on bg color mode (like Manga Paint background mode)
@@ -18,16 +19,20 @@
 # - Pan image with arrow keys
 # - Pan tool
 # - Palm reject
+# - Add CRT-effect to preview
 # - New undo-system; Hold a number of stroke undos, not per-pixel history.
 # - Make colour set to BG draw as transparent?
-# - Add CRT-effect to preview
+# - Select an area, flip, rotate and move contents around.
 #
 #
 # Fixes/Bugs Todo:
 #
+# - Zoom function sometimes ends by drawing a pixel, figure out why
+# - Activity indicator will not appear, figure out why
 # - Error on exit if there is no image. has_image function fails
 # - Code changes have resulted in multiple duplicate functions, go through and clean up
-# - Zoom function sometimes ends by drawing a pixel, should not do that
+# - Optimize draw line
+# - Optimize redraw screen
 
 import console
 import scene
@@ -75,11 +80,11 @@ def color_to_255(color):
 
 
 # Returns the closest to given color in the C64-palette
-def closest_in_palette(matchColor):
+def closest_in_palette(matchColor,matchPalette):
     i = 0
     bestDelta = 1000
     c = 0
-    for color in Settings.c64color_palette:
+    for color in matchPalette:
         r = sorted((color[0],matchColor[0]))
         g = sorted((color[1],matchColor[1]))
         b = sorted((color[2],matchColor[2]))
@@ -88,7 +93,7 @@ def closest_in_palette(matchColor):
             i = c
             bestDelta = delta
         c = c + 1
-    return Settings.c64color_palette[i]
+    return matchPalette[i]
 
 
 # Check if number is even or odd, used by checkered paint mode
@@ -196,6 +201,8 @@ class PixelEditor(ui.View):
         self.pixels = []
         self.image_view = self.create_image_view()
         self.grid_layout = self.create_grid_layout()
+        self.color_check = self.create_image_view()
+        self.color_check.hidden = True
         self.image_view.image = self.create_new_image() # Needs to be set twice for some reason..
         self.zoom_frame = self.create_zoom_frame()
         self.grid_layout.alpha = self.gridOpacity
@@ -317,7 +324,7 @@ class PixelEditor(ui.View):
     def create_new_image(self):
         path = ui.Path.rect(*self.bounds)
         with ui.ImageContext(self.width, self.height) as ctx:
-            ui.set_color((0, 0, 0, 1))
+            ui.set_color((0, 0, 0, 0))
             path.fill()
             return ctx.get_image()
 
@@ -403,6 +410,56 @@ class PixelEditor(ui.View):
         self.grid_layout.alpha = self.gridOpacity
         return True
     
+    # Check characters if they have a legal amount of colours
+    def character_colorcheck_old(self):
+        #self.color_check.hidden = False
+        debugCount = 0
+        with ui.ImageContext(self.width, self.height) as ctx:
+            for row in range (0, 25):
+                for col in range (0, 40):
+                    # Collect pixels in current character
+                    charColors ={(self.background_color[0], self.background_color[1], self.background_color[2])}
+                    startIndex = col*4 + row*Settings.actualWidth*Settings.charSize
+                    for pixelRow in range(0, 8):
+                        for pixelCol in range (0, 4):
+                            pixelIndex = startIndex + pixelRow*Settings.actualWidth + pixelCol
+                            charColors.add((self.pixels[pixelIndex].color[0], self.pixels[pixelIndex].color[1], self.pixels[pixelIndex].color[2]))
+                    if len(charColors) > 4:
+                        p = self.pixels[startIndex]
+                        ui.set_color('red')
+                        pixel_path = ui.Path.rect(p.rect[0],p.rect[1],p.rect[2]*Settings.charSize*0.5,p.rect[3]*Settings.charSize)
+                        pixel_path.line_width = 2
+                        #pixel_path.fill()
+                        pixel_path.stroke()
+                        self.color_check.image = ctx.get_image()
+                        if debugCount < 40: 
+                            print (str(len(charColors)) + " colors at character " + str(col) + "," + str(row) )
+                            #print str(charColors)
+                        debugCount = debugCount + 1
+    
+    def character_colorcheck(self):
+        (startPos, endPos) = self.get_current_region()
+        charSize = Settings.charSize
+        pixelScale =  self.width/(endPos[0]-startPos[0]+1)/Settings.pixelSize #self.height/Settings.height
+        #s = self.width/self.row if self.row > self.column else self.height/self.column
+        with ui.ImageContext(self.width, self.height) as ctx:
+            ui.set_color('red')
+            # Grid line per character
+            for y in xrange(int(startPos[1]/charSize)*charSize, endPos[1]+1, charSize):
+                for x in xrange(int(startPos[0]/charSize*charSize), endPos[0]+1,4):
+                    # Check this character for color clash
+                    charColors ={(self.background_color[0], self.background_color[1], self.background_color[2])}
+                    startIndex = xy_to_index(x,y)
+                    for pixelRow in range(0, 8):
+                        for pixelCol in range (0, 4):
+                            pixelIndex = startIndex + pixelRow*Settings.actualWidth + pixelCol
+                            charColors.add((self.pixels[pixelIndex].color[0], self.pixels[pixelIndex].color[1], self.pixels[pixelIndex].color[2]))
+                    if len(charColors) > 4:
+                        pixel_path = ui.Path.rect((x-startPos[0])*pixelScale*2, (y-startPos[1])*pixelScale, pixelScale*charSize, pixelScale*charSize)
+                        pixel_path.line_width = 2
+                        pixel_path.stroke()
+                        self.color_check.image = ctx.get_image()    
+    
     #@ui.in_background
     def preview_init(self):
         path = ui.Path.rect(0, 0, Settings.width, Settings.height)
@@ -455,9 +512,9 @@ class PixelEditor(ui.View):
         #else:
         #    print("Attempted autosave with no image data.")
 
-    @ui.in_background
+    #@ui.in_background
     def loadimage(self, file_name, colorcheck=True):
-        # if a temp version exists, load that instead
+        self.color_check.hidden = True:
         loadImg = file_to_img(Settings.height, Settings.width, file_name)
         img = self.create_new_image()
         charRowSize = Settings.actualWidth * Settings.charSize
@@ -477,7 +534,7 @@ class PixelEditor(ui.View):
                 pixelCol = loadImg.getpixel(self.pixels[i].position)
                 # Find the closest color in the C64 palette
                 if colorcheck == True:
-                    pixelCol = closest_in_palette(pixelCol)
+                    pixelCol = closest_in_palette(pixelCol,Settings.c64color_palette)
                 self.pixels[i].color = color_to_1(pixelCol)
             img = self.draw_index_array(img, indexArray)
             self.set_image(img)
@@ -636,6 +693,8 @@ class PixelEditor(ui.View):
                         self.zoomState = True
                         self.redraw_canvas()
                         self.zoom_frame.hidden = True
+                        if self.color_check.hidden == False:
+                            self.character_colorcheck()
 
                         # Return to previous tool mode
                         self.toolMode = self.prevMode
@@ -713,13 +772,16 @@ class ColorView (ui.View):
     def set_color(self, color=None):
         color = color or self.get_color()
         if self['current_color'].background_color == color:
+            # Set color twice, and the image bg color will be set
             self['bg_color'].background_color = color
             self.superview['editor'].background_color = color
+            if self.superview['editor'].color_check.hidden == False:
+                self.superview['editor'].character_colorcheck()
         else:
             self['current_color'].background_color = color
             self.superview['editor'].current_color = color
             self.superview['debugtext'].text = "BG color set to " + str(color_to_255(color))
-
+            
     @ui.in_background
     def choose_color(self, sender):
         if sender.name in self.color:
@@ -793,6 +855,15 @@ class ToolbarView (ui.View):
         self.superview['editor'].zoom_frame.hidden = True
         self.superview['debugtext'].text = "Painting lines!"
 
+    def chartest(self, sender):
+        #self.superview['editor'].toolMode = 'chartest'
+        if self.superview['editor'].color_check.hidden == True:
+            self.superview['editor'].color_check.hidden = False
+            self.superview['debugtext'].text = "Testing character colors!"
+            self.superview['editor'].character_colorcheck()
+        else:
+            self.superview['editor'].color_check.hidden = True
+        
     def dither(self, sender):
         if self.superview['editor'].drawDithered == False:
             self.superview['editor'].drawDithered = True
@@ -843,6 +914,8 @@ class ToolbarView (ui.View):
         # Redraw canvas if we are zoomed in
         if self.superview['editor'].zoomState == True:
             self.superview['editor'].redraw_canvas()
+            if self.superview['editor'].color_check.hidden == False:
+                self.superview['editor'].character_colorcheck()
 
     @ui.in_background
     def load(self, sender):
