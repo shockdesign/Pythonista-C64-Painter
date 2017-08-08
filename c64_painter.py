@@ -23,6 +23,7 @@
 # - New undo-system; Hold a number of stroke undos, not per-pixel history.
 # - Make colour set to BG draw as transparent?
 # - Select an area, flip, rotate and move contents around.
+# - Gamepad support for true retro experience! Is it possible with Pythonista?
 #
 #
 # Fixes/Bugs Todo:
@@ -192,7 +193,7 @@ class PixelEditor(ui.View):
 
     # Last autosave and undo time
     lastSave = 0
-    lastUndo = 0 #! Todo, add undo
+    lastUndo = 0
 
     def did_load(self):
         self.row = Settings.width/Settings.pixelSize
@@ -411,35 +412,10 @@ class PixelEditor(ui.View):
         return True
     
     # Check characters if they have a legal amount of colours
-    def character_colorcheck_old(self):
-        #self.color_check.hidden = False
-        debugCount = 0
-        with ui.ImageContext(self.width, self.height) as ctx:
-            for row in range (0, 25):
-                for col in range (0, 40):
-                    # Collect pixels in current character
-                    charColors ={(self.background_color[0], self.background_color[1], self.background_color[2])}
-                    startIndex = col*4 + row*Settings.actualWidth*Settings.charSize
-                    for pixelRow in range(0, 8):
-                        for pixelCol in range (0, 4):
-                            pixelIndex = startIndex + pixelRow*Settings.actualWidth + pixelCol
-                            charColors.add((self.pixels[pixelIndex].color[0], self.pixels[pixelIndex].color[1], self.pixels[pixelIndex].color[2]))
-                    if len(charColors) > 4:
-                        p = self.pixels[startIndex]
-                        ui.set_color('red')
-                        pixel_path = ui.Path.rect(p.rect[0],p.rect[1],p.rect[2]*Settings.charSize*0.5,p.rect[3]*Settings.charSize)
-                        pixel_path.line_width = 2
-                        #pixel_path.fill()
-                        pixel_path.stroke()
-                        self.color_check.image = ctx.get_image()
-                        if debugCount < 40: 
-                            print (str(len(charColors)) + " colors at character " + str(col) + "," + str(row) )
-                            #print str(charColors)
-                        debugCount = debugCount + 1
-    
     def character_colorcheck(self):
         (startPos, endPos) = self.get_current_region()
         charSize = Settings.charSize
+        clashCount = 0
         pixelScale =  self.width/(endPos[0]-startPos[0]+1)/Settings.pixelSize #self.height/Settings.height
         #s = self.width/self.row if self.row > self.column else self.height/self.column
         with ui.ImageContext(self.width, self.height) as ctx:
@@ -455,10 +431,13 @@ class PixelEditor(ui.View):
                             pixelIndex = startIndex + pixelRow*Settings.actualWidth + pixelCol
                             charColors.add((self.pixels[pixelIndex].color[0], self.pixels[pixelIndex].color[1], self.pixels[pixelIndex].color[2]))
                     if len(charColors) > 4:
+                        clashCount = clashCount + 1
                         pixel_path = ui.Path.rect((x-startPos[0])*pixelScale*2, (y-startPos[1])*pixelScale, pixelScale*charSize, pixelScale*charSize)
                         pixel_path.line_width = 2
                         pixel_path.stroke()
-                        self.color_check.image = ctx.get_image()    
+                        self.color_check.image = ctx.get_image()
+        self.superview['debugtext'].text = str(clashCount) + " characters have color clashes."
+        return clashCount
     
     #@ui.in_background
     def preview_init(self):
@@ -859,7 +838,6 @@ class ToolbarView (ui.View):
         #self.superview['editor'].toolMode = 'chartest'
         if self.superview['editor'].color_check.hidden == True:
             self.superview['editor'].color_check.hidden = False
-            self.superview['debugtext'].text = "Testing character colors!"
             self.superview['editor'].character_colorcheck()
         else:
             self.superview['editor'].color_check.hidden = True
@@ -946,6 +924,8 @@ class ToolbarView (ui.View):
             elif option == 2:
                 # Saves image to disk
                 imageName = console.input_alert('Save Image')
+                if imageName[-4:] == ".png":
+                    imageName = imageName[:-4]
                 fileName = ('images/' + imageName + '.png')
                 if isfile(fileName):
                     console.hud_alert('File exist!','error')
